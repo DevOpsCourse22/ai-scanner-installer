@@ -1,0 +1,7 @@
+ui/node_modules
+ui/dist
+.git
+tests
+**/__pycache__
+**/.terraform
+*.tfstate*

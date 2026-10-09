@@ -1,0 +1,29 @@
+diff --git a/deployment.yaml b/app/deployment.yaml
+similarity index 100%
+rename from deployment.yaml
+rename to app/deployment.yaml
+diff --git a/app/kustomization.yaml b/app/kustomization.yaml
+new file mode 100644
+index 0000000..a15953e
+--- /dev/null
++++ b/app/kustomization.yaml
+@@ -0,0 +1,6 @@
++# A Kustomize unit for this folder, so the installer's overlays (overlays/<env>/)
++# can use it. The root kustomization.yaml still lists these files directly.
++apiVersion: kustomize.config.k8s.io/v1beta1
++kind: Kustomization
++resources:
++  - deployment.yaml
+diff --git a/kustomization.yaml b/kustomization.yaml
+index 928e895..3c0857c 100644
+--- a/kustomization.yaml
++++ b/kustomization.yaml
+@@ -16,7 +16,7 @@ apiVersion: kustomize.config.k8s.io/v1beta1       # the Kustomize config format
+ kind: Kustomization                               # this file describes a set of manifests to apply together
+ 
+ resources:                                        # the files that make up the UI
+-  - deployment.yaml                               # the React UI (nginx, uid 101), Deployment and Service
++  - app/deployment.yaml                               # the React UI (nginx, uid 101), Deployment and Service
+ 
+ images:                                           # rewrite image references in the manifests above
+   - name: review-frontend                         # every "image: review-frontend" ...

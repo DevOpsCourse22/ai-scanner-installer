@@ -1,0 +1,154 @@
+"""Unit tests for the parts that need no cluster: the vault, the answers API
+(secrets never come back), validation, redaction, overlays and the plans."""
+
+import importlib
+import time
+
+import pytest
+import yaml
+from fastapi.testclient import TestClient
+
+
+@pytest.fixture()
+def api(tmp_path, monkeypatch):
+    monkeypatch.setenv("INSTALLER_DATA", str(tmp_path))
+    from installer import vault
+    importlib.reload(vault)
+    from installer import app as appmod
+    importlib.reload(appmod)
+    appmod._session.update(answers=None, passphrase=None)
+    return TestClient(appmod.app), appmod
+
+
+def test_vault_round_trip_and_wrong_passphrase(tmp_path, monkeypatch):
+    monkeypatch.setenv("INSTALLER_DATA", str(tmp_path))
+    from installer import vault
+    importlib.reload(vault)
+    vault.save({"repos": {"token": "ghp_secret"}}, "correct horse")
+    assert vault.load("correct horse") == {"repos": {"token": "ghp_secret"}}
+    assert b"ghp_secret" not in (tmp_path / "answers.enc").read_bytes()
+    with pytest.raises(vault.VaultLocked):
+        vault.load("wrong passphrase")
+
+
+def test_answers_never_return_secrets_and_empty_keeps_them(api):
+    client, appmod = api
+    assert client.post("/api/unlock", json={"passphrase": "short"}).status_code == 400
+    assert client.post("/api/unlock", json={"passphrase": "longenough1", "new": True}).status_code == 200
+    body = {"repos": {"owner": "me", "token": "ghp_abcdefghij"}, "ai": {"mode": "cloud", "api_key": "sk-123456789"}}
+    out = client.put("/api/answers", json={"answers": body}).json()["answers"]
+    assert out["repos"]["token"] == "" and out["repos"]["token_saved"] is True
+    assert "sk-123456789" not in str(out)
+    # the wizard sends the masked copy back: the secrets must survive
+    client.put("/api/answers", json={"answers": out})
+    assert appmod._session["answers"]["repos"]["token"] == "ghp_abcdefghij"
+    assert appmod._session["answers"]["ai"]["api_key"] == "sk-123456789"
+    # a fresh process unlocks the same answers with the passphrase
+    appmod._session.update(answers=None, passphrase=None)
+    assert client.post("/api/unlock", json={"passphrase": "wrongwrong"}).status_code == 403
+    assert client.post("/api/unlock", json={"passphrase": "longenough1"}).status_code == 200
+    assert appmod._session["answers"]["repos"]["token"] == "ghp_abcdefghij"
+
+
+def test_validate_lists_what_is_missing():
+    from installer.app import validate
+    miss = validate({"target": {"kind": "eks", "eks": {}}, "ai": {"mode": "cloud"}})
+    assert "AWS region" in miss and "AWS credentials" in miss and "GitHub token" in miss
+    assert "the AI provider and its key" in miss and "at least one admin" in miss
+    ok = {"target": {"kind": "local", "context": "minikube"}, "repos": {"owner": "o", "token": "t"},
+          "ai": {"mode": "same_machine", "endpoint": "http://x:1234/v1"}, "admins": ["a"]}
+    assert validate(ok) == []
+
+
+def test_run_log_redacts_secrets():
+    from installer import runner
+    seen = []
+
+    def step(ctx):
+        ctx.log("token is ghp_supersecret and key sk-abc12345")
+        seen.append(1)
+
+    run = runner.start("install", [runner.Step("s", "S", step)], {},
+                       ["ghp_supersecret", "sk-abc12345"], ".")
+    for _ in range(50):
+        if run.status == "done":
+            break
+        time.sleep(0.05)
+    assert run.status == "done" and seen
+    text = " ".join(line["text"] for line in run.lines)
+    assert "ghp_supersecret" not in text and "sk-abc12345" not in text and "••••" in text
+
+
+def test_secret_values_cover_every_secret():
+    from installer.plans import ensure_generated, secret_values
+    a = {"repos": {"token": "T1"}, "ai": {"api_key": "K1", "ts_client_secret": "S1"},
+         "oauth": {"client_secret": "O1"},
+         "target": {"ssh": {"sudo_password": "P1", "private_key": "-----BEGIN-----\n" + "A" * 64 + "\n-----END-----"},
+                    "eks": {"aws_secret_access_key": "A1"}}}
+    ensure_generated(a)
+    vals = secret_values(a)
+    for v in ("T1", "K1", "S1", "O1", "P1", "A1", "A" * 64, a["generated"]["postgres_password"],
+              a["generated"]["settings_key"], a["generated"]["jenkins_password"]):
+        assert v in vals
+    pw = a["generated"]["postgres_password"]
+    assert all(c not in pw for c in "@:/")      # it goes into a database URL
+
+
+def test_generated_values_are_kept_on_upgrade():
+    from installer.plans import ensure_generated
+    a = {}
+    ensure_generated(a)
+    first = dict(a["generated"])
+    ensure_generated(a)
+    assert a["generated"] == first
+
+
+def test_plans_have_the_expected_steps():
+    from installer.plans import destroy_plan, install_plan
+    local = [s.id for s in install_plan({"target": {"kind": "local"}})]
+    assert local[0] == "connect" and local[-1] == "result" and "terraform" not in local
+    eks = [s.id for s in install_plan({"target": {"kind": "eks"}})]
+    assert eks[:2] == ["terraform", "storage"] and "connect" not in eks
+    assert [s.id for s in destroy_plan({"target": {"kind": "eks"}})][-1] == "terraform"
+
+
+def test_jenkins_values_carry_env_and_jobs():
+    from installer import platform
+    v = yaml.safe_load(platform.jenkins_values(dict(
+        registry_kind="ecr", registry="1.dkr.ecr.us-east-1.amazonaws.com", owner="fork",
+        env="eks", jenkins_url="http://x/", aws_region="us-east-1", service_type="LoadBalancer",
+        installer_repo="DevOpsCourse22/ai-scanner-installer", branch="env/eks")))
+    casc = v["controller"]["JCasC"]["configScripts"]
+    env = yaml.safe_load(casc["ci-registry"])["jenkins"]["globalNodeProperties"][0]["envVars"]["env"]
+    for kv in (("CODE_OWNER", "fork"), ("DEPLOY_ENV", "eks"), ("DEPLOY_BRANCH", "env/eks"),
+               ("INSTALLER_REPO", "DevOpsCourse22/ai-scanner-installer"), ("REGISTRY_KIND", "ecr")):
+        assert {"key": kv[0], "value": kv[1]} in env
+    jobs = casc["ci-jobs"]
+    assert jobs.count("pipelineJob(") == 3 and "githubPush()" in jobs
+    assert "scriptPath('environments/eks/ci/ai-scanner-backend.Jenkinsfile')" in jobs
+    assert "ghp" not in str(v)     # the token is referenced, never inlined
+
+
+def test_gateway_overlay_sets_the_address():
+    from installer import overlays
+    files = overlays.gateway(dict(registry="r", tag="t", public_url="https://scan.example.com/", admins=["a", "b"]))
+    patch = files["app-patch.yaml"]
+    assert 'value: "true"' in patch.split("GATEWAY_COOKIE_SECURE")[1].split(chr(10))[1]
+    assert "https://scan.example.com/auth/github/callback" in patch
+    assert "GATEWAY_DEFAULT" not in patch
+    assert files["admins-patch.yaml"].rstrip().endswith("a" + chr(10) + "    b")
+
+
+def test_derived_jenkinsfiles_keep_the_pipeline_and_deploy_here():
+    from pathlib import Path
+    from installer import pipelines
+    for repo, app in pipelines.APPS.items():
+        src = Path(__file__).resolve().parents[2] / repo / "Jenkinsfile"
+        if not src.exists():
+            continue
+        out = pipelines.derive(repo, src.read_text(encoding="utf-8"), "local")
+        for kept in ("stage('Test')", "stage('Build')", "stage('Scan')", "stage('Push')", "stage('Deploy')"):
+            assert kept in out
+        assert "skipDefaultCheckout()" in out and "stage('Checkout')" in out
+        assert f"set_env_image" in out and f"environments/local/ci/{repo}.pod.yaml" in out
+        assert "branch 'main'" not in out and "DevOpsCourse22/" + repo + "-deployment" not in out

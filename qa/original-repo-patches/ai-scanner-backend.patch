@@ -1,0 +1,53 @@
+diff --git a/Jenkinsfile b/Jenkinsfile
+index 14873b0..48cef1e 100644
+--- a/Jenkinsfile
++++ b/Jenkinsfile
+@@ -15,6 +15,8 @@
+ //   REGISTRY_KIND=ecr    REGISTRY=<account>.dkr.ecr.<region>.amazonaws.com  AWS_REGION=<region>   (EKS)
+ // Credentials (Manage Jenkins > Credentials), never in this file:
+ //   github-deploy  username + fine-grained token that may push to the deployment repositories
++//   DEPLOY_OWNER / DEPLOY_ENV  set only by ai-scanner-installer: the GitHub owner of the deployment repo, and
++//                  its overlay (overlays/<env>/app-patch.yaml) the Deploy stage edits instead of the root files
+ //   aws-ecr        only for ECR from outside AWS: access key id + secret (on EKS use IRSA instead and leave AWS_CREDENTIALS_ID empty)
+ 
+ def IMAGES = [
+@@ -45,7 +47,7 @@ pipeline {
+         REGISTRY_KIND = "${env.REGISTRY_KIND ?: 'local'}"
+         REGISTRY      = "${env.REGISTRY ?: '10.0.0.39:30500'}"
+         TAG           = "${env.GIT_COMMIT.take(7)}"        // the image tag is the commit it was built from
+-        DEPLOY_REPO   = 'DevOpsCourse22/ai-scanner-backend-deployment'
++        DEPLOY_REPO   = "${env.DEPLOY_OWNER ?: 'DevOpsCourse22'}/ai-scanner-backend-deployment"   // DEPLOY_OWNER: a fork chosen in the installer
+     }
+ 
+     stages {
+@@ -133,7 +135,9 @@ pipeline {
+                             clone_deploy_repo
+                             set_image review-api kustomization.yaml
+                             # review-api starts each review as a Job running this image; the name is an env var, which Kustomize does not rewrite
+-                            sed -i "s|value: [^ ]*scanner-worker:[^ ]*|value: ${REGISTRY}/scanner-worker:${TAG}|" review-api/deployment.yaml
++                            WORKER_FILE=review-api/deployment.yaml
++                            if [ -n "${DEPLOY_ENV:-}" ]; then WORKER_FILE="overlays/$DEPLOY_ENV/app-patch.yaml"; fi   # an installer-made environment
++                            sed -i "s|value: [^ ]*scanner-worker:[^ ]*|value: ${REGISTRY}/scanner-worker:${TAG}|" "$WORKER_FILE"
+                             commit_and_push "review-api and scanner-worker"
+                         '''
+                     }
+diff --git a/ci/deploy-lib.sh b/ci/deploy-lib.sh
+index ff2db1f..9894010 100644
+--- a/ci/deploy-lib.sh
++++ b/ci/deploy-lib.sh
+@@ -25,6 +25,15 @@ clone_deploy_repo() {
+ #       newTag: <tag>
+ # Safe to run again: an existing newName line is replaced, not duplicated.
+ set_image() {
++    # An install made by ai-scanner-installer sets DEPLOY_ENV (Jenkins global
++    # variable): its images live in overlays/<env>/app-patch.yaml as full
++    # "image: <registry>/<name>:<tag>" lines.
++    if [ -n "${DEPLOY_ENV:-}" ]; then
++        f="overlays/${DEPLOY_ENV}/app-patch.yaml"
++        sed -i "s|image: [^ ]*/$1:[^ ]*|image: ${REGISTRY}/$1:${TAG}|" "$f"
++        grep -q "image: ${REGISTRY}/$1:${TAG}" "$f" || { echo "set_image: no image line for $1 in $f" >&2; exit 1; }
++        return 0
++    fi
+     sed -i -e "/- name: $1 /,/newTag:/{/newName:/d;s|^    newTag:.*|    newName: ${REGISTRY}/$1                    # set by Jenkins: the registry it was pushed to\n    newTag: ${TAG}                               # set by Jenkins: the commit it was built from|}" "$2"
+     grep -q "newName: ${REGISTRY}/$1 " "$2" || { echo "set_image: no images entry for $1 in $2" >&2; exit 1; }
+ }

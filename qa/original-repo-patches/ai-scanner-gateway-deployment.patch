@@ -1,0 +1,36 @@
+diff --git a/admins-configmap.yaml b/app/admins-configmap.yaml
+similarity index 100%
+rename from admins-configmap.yaml
+rename to app/admins-configmap.yaml
+diff --git a/deployment.yaml b/app/deployment.yaml
+similarity index 100%
+rename from deployment.yaml
+rename to app/deployment.yaml
+diff --git a/app/kustomization.yaml b/app/kustomization.yaml
+new file mode 100644
+index 0000000..74b8c69
+--- /dev/null
++++ b/app/kustomization.yaml
+@@ -0,0 +1,7 @@
++# A Kustomize unit for this folder, so the installer's overlays (overlays/<env>/)
++# can use it. The root kustomization.yaml still lists these files directly.
++apiVersion: kustomize.config.k8s.io/v1beta1
++kind: Kustomization
++resources:
++  - admins-configmap.yaml
++  - deployment.yaml
+diff --git a/kustomization.yaml b/kustomization.yaml
+index d0567f1..12bbf71 100644
+--- a/kustomization.yaml
++++ b/kustomization.yaml
+@@ -17,8 +17,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1       # the Kustomize config format
+ kind: Kustomization                               # this file describes a set of manifests to apply together
+ 
+ resources:                                        # the files that make up the gateway
+-  - admins-configmap.yaml                         # ConfigMap gateway-admins: who may change site-wide settings (edit with kubectl, no restart)
+-  - deployment.yaml                               # gateway Deployment and Service (reads the gateway-secrets Secret)
++  - app/admins-configmap.yaml                         # ConfigMap gateway-admins: who may change site-wide settings (edit with kubectl, no restart)
++  - app/deployment.yaml                               # gateway Deployment and Service (reads the gateway-secrets Secret)
+ 
+ images:                                           # rewrite image references in the manifests above
+   - name: review-gateway                          # every "image: review-gateway" ...

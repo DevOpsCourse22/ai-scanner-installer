@@ -1,0 +1,6 @@
+ui/node_modules/
+ui/dist/
+__pycache__/
+.terraform/
+*.tfstate*
+.pytest_cache/

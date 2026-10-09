@@ -1,0 +1,129 @@
+diff --git a/Jenkinsfile b/Jenkinsfile
+index e8e625b..b97feeb 100644
+--- a/Jenkinsfile
++++ b/Jenkinsfile
+@@ -32,7 +32,7 @@ pipeline {
+         REGISTRY_KIND = "${env.REGISTRY_KIND ?: 'local'}"
+         REGISTRY      = "${env.REGISTRY ?: '10.0.0.39:30500'}"
+         TAG           = "${env.GIT_COMMIT.take(7)}"
+-        DEPLOY_REPO   = 'DevOpsCourse22/ai-scanner-gateway-deployment'
++        DEPLOY_REPO   = "${env.DEPLOY_OWNER ?: 'DevOpsCourse22'}/ai-scanner-gateway-deployment"   // DEPLOY_OWNER: a fork chosen in the installer
+     }
+ 
+     stages {
+diff --git a/ci/deploy-lib.sh b/ci/deploy-lib.sh
+index ff2db1f..9894010 100644
+--- a/ci/deploy-lib.sh
++++ b/ci/deploy-lib.sh
+@@ -25,6 +25,15 @@ clone_deploy_repo() {
+ #       newTag: <tag>
+ # Safe to run again: an existing newName line is replaced, not duplicated.
+ set_image() {
++    # An install made by ai-scanner-installer sets DEPLOY_ENV (Jenkins global
++    # variable): its images live in overlays/<env>/app-patch.yaml as full
++    # "image: <registry>/<name>:<tag>" lines.
++    if [ -n "${DEPLOY_ENV:-}" ]; then
++        f="overlays/${DEPLOY_ENV}/app-patch.yaml"
++        sed -i "s|image: [^ ]*/$1:[^ ]*|image: ${REGISTRY}/$1:${TAG}|" "$f"
++        grep -q "image: ${REGISTRY}/$1:${TAG}" "$f" || { echo "set_image: no image line for $1 in $f" >&2; exit 1; }
++        return 0
++    fi
+     sed -i -e "/- name: $1 /,/newTag:/{/newName:/d;s|^    newTag:.*|    newName: ${REGISTRY}/$1                    # set by Jenkins: the registry it was pushed to\n    newTag: ${TAG}                               # set by Jenkins: the commit it was built from|}" "$2"
+     grep -q "newName: ${REGISTRY}/$1 " "$2" || { echo "set_image: no images entry for $1 in $2" >&2; exit 1; }
+ }
+diff --git a/src/review_gateway/app.py b/src/review_gateway/app.py
+index aab0e3c..46adc91 100644
+--- a/src/review_gateway/app.py
++++ b/src/review_gateway/app.py
+@@ -55,6 +55,13 @@ log = logging.getLogger("review_gateway")
+ 
+ app = FastAPI(title="review-gateway")
+ init_db()
++# The installer's default AI service, saved once if none is saved yet. A
++# failure here must not stop the gateway: Settings can still set it.
++try:
++    with get_session() as _db:
++        site_settings.seed_ai_from_env(_db)
++except Exception:  # noqa: BLE001
++    log.exception("could not apply the default AI service")
+ 
+ # The React app runs on a different origin (Vite dev server) than the
+ # gateway, and needs cookies (the session) sent cross-origin - that requires
+diff --git a/src/review_gateway/site_settings.py b/src/review_gateway/site_settings.py
+index e6fbf71..4d1f5a8 100644
+--- a/src/review_gateway/site_settings.py
++++ b/src/review_gateway/site_settings.py
+@@ -168,6 +168,33 @@ def save_ai(db: Session, *, preset: str, endpoint: str, model: str,
+     return ai_public(db)
+ 
+ 
++def seed_ai_from_env(db: Session) -> bool:
++    """The installer's default AI service, applied ONCE: when no AI choice
++    is saved yet and GATEWAY_DEFAULT_AI_PRESET is set, save it as if an
++    admin had chosen it. A saved choice always wins, so an admin's change
++    in Settings is never overwritten by a restart. Returns True if seeded.
++
++        GATEWAY_DEFAULT_AI_PRESET    local | openai | anthropic | google | groq | openrouter | mistral
++        GATEWAY_DEFAULT_AI_ENDPOINT  only for "local": the model server's /v1 address
++        GATEWAY_DEFAULT_AI_MODEL     the model id (empty: the service's default)
++        GATEWAY_DEFAULT_AI_KEY       the API key (from a Secret, never a plain value)
++    """
++    preset = os.environ.get("GATEWAY_DEFAULT_AI_PRESET", "").strip()
++    if not preset or _row(db) is not None:
++        return False
++    api_key = os.environ.get("GATEWAY_DEFAULT_AI_KEY", "").strip()
++    if api_key and not encryption_ready():
++        log.warning("GATEWAY_DEFAULT_AI_KEY is set but GATEWAY_SETTINGS_KEY is "
++                    "not; the default AI service was not saved")
++        return False
++    save_ai(db, preset=preset,
++            endpoint=os.environ.get("GATEWAY_DEFAULT_AI_ENDPOINT", "").strip(),
++            model=os.environ.get("GATEWAY_DEFAULT_AI_MODEL", "").strip(),
++            api_key=api_key or None, clear_key=False, who="installer")
++    log.info("AI service set to %s from the installer's default", preset)
++    return True
++
++
+ def clear_ai(db: Session) -> None:
+     row = _row(db)
+     if row is not None:
+diff --git a/tests/test_site_settings.py b/tests/test_site_settings.py
+index c3177ab..5ac4be9 100644
+--- a/tests/test_site_settings.py
++++ b/tests/test_site_settings.py
+@@ -205,3 +205,35 @@ def test_still_stopping_is_a_409_and_the_row_stays():
+     session = gateway_db.get_session()
+     assert session.get(gateway_db.Trigger, trigger_id) is not None
+     session.close()
++
++
++def test_the_installer_default_is_saved_once(monkeypatch):
++    monkeypatch.setenv("GATEWAY_DEFAULT_AI_PRESET", "openai")
++    monkeypatch.setenv("GATEWAY_DEFAULT_AI_MODEL", "gpt-4.1-mini")
++    monkeypatch.setenv("GATEWAY_DEFAULT_AI_KEY", KEY)
++    with gateway_db.get_session() as session:
++        assert site_settings.seed_ai_from_env(session) is True
++        saved = site_settings.ai_for_review(session)
++        assert saved == {"preset": "openai", "endpoint": "", "model": "gpt-4.1-mini",
++                         "api_key": KEY}
++        # an admin's later choice is never overwritten by a restart
++        site_settings.save_ai(session, preset="groq", endpoint="", model="m",
++                              api_key="gsk-0123456789", clear_key=False, who="site-admin")
++        assert site_settings.seed_ai_from_env(session) is False
++        assert site_settings.ai_public(session)["preset"] == "groq"
++
++
++def test_no_installer_default_means_nothing_is_saved(monkeypatch):
++    monkeypatch.delenv("GATEWAY_DEFAULT_AI_PRESET", raising=False)
++    with gateway_db.get_session() as session:
++        assert site_settings.seed_ai_from_env(session) is False
++        assert site_settings.ai_public(session) == {"configured": False}
++
++
++def test_a_local_default_needs_no_key(monkeypatch):
++    monkeypatch.setenv("GATEWAY_DEFAULT_AI_PRESET", "local")
++    monkeypatch.setenv("GATEWAY_DEFAULT_AI_ENDPOINT", "http://lmstudio:1234/v1")
++    monkeypatch.delenv("GATEWAY_DEFAULT_AI_KEY", raising=False)
++    with gateway_db.get_session() as session:
++        assert site_settings.seed_ai_from_env(session) is True
++        assert site_settings.ai_public(session)["endpoint"] == "http://lmstudio:1234/v1"

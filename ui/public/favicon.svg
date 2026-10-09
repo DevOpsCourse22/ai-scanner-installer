@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <title>AI Scan Repos</title>
+  <!-- Three lines of code; the middle one is marked with a highlighter,
+       the way a reviewer marks the line that needs a fix. -->
+  <rect width="64" height="64" rx="15" fill="#1d4f45"/>
+  <rect x="12" y="12" width="30" height="7" rx="3.5" fill="#e9f1ec"/>
+  <path d="M8 26.5 L56 23.5 L56.5 37.5 L8.5 40.5 Z" fill="#d6ee4a"/>
+  <rect x="13" y="28.5" width="36" height="7" rx="3.5" fill="#1d4f45"/>
+  <rect x="12" y="45" width="21" height="7" rx="3.5" fill="#e9f1ec" opacity=".72"/>
+</svg>

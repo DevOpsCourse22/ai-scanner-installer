@@ -1,0 +1,51 @@
+diff --git a/ingress/kustomization.yaml b/ingress/kustomization.yaml
+new file mode 100644
+index 0000000..cc32877
+--- /dev/null
++++ b/ingress/kustomization.yaml
+@@ -0,0 +1,6 @@
++# A Kustomize unit for this folder, so the installer's overlays (overlays/<env>/)
++# can use it. The root kustomization.yaml still lists these files directly.
++apiVersion: kustomize.config.k8s.io/v1beta1
++kind: Kustomization
++resources:
++  - ingress.yaml
+diff --git a/postgres/kustomization.yaml b/postgres/kustomization.yaml
+new file mode 100644
+index 0000000..7d6cc1a
+--- /dev/null
++++ b/postgres/kustomization.yaml
+@@ -0,0 +1,6 @@
++# A Kustomize unit for this folder, so the installer's overlays (overlays/<env>/)
++# can use it. The root kustomization.yaml still lists these files directly.
++apiVersion: kustomize.config.k8s.io/v1beta1
++kind: Kustomization
++resources:
++  - postgres.yaml
+diff --git a/review-api/kustomization.yaml b/review-api/kustomization.yaml
+new file mode 100644
+index 0000000..a134b4c
+--- /dev/null
++++ b/review-api/kustomization.yaml
+@@ -0,0 +1,8 @@
++# A Kustomize unit for this folder, so the installer's overlays (overlays/<env>/)
++# can use it. The root kustomization.yaml still lists these files directly.
++apiVersion: kustomize.config.k8s.io/v1beta1
++kind: Kustomization
++resources:
++  - rbac.yaml
++  - lmstudio-egress.yaml
++  - deployment.yaml
+diff --git a/storage/kustomization.yaml b/storage/kustomization.yaml
+new file mode 100644
+index 0000000..5a5c874
+--- /dev/null
++++ b/storage/kustomization.yaml
+@@ -0,0 +1,7 @@
++# A Kustomize unit for this folder, so the installer's overlays (overlays/<env>/)
++# can use it. The root kustomization.yaml still lists these files directly.
++apiVersion: kustomize.config.k8s.io/v1beta1
++kind: Kustomization
++resources:
++  - storageclass-reports.yaml
++  - pvc-reports.yaml
