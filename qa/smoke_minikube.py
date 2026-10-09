@@ -90,6 +90,7 @@ steps = [runner.Step("connect", "Connect", plans.s_connect),
          runner.Step("addr", "Address", lambda c: c.state.update(public_url="http://localhost")),
          runner.Step("secrets", "Secrets", plans.s_app_secrets),
          runner.Step("apply", "Overlays + apply", s_write_and_apply),
+         runner.Step("database", "DB password", plans.s_db_password),
          runner.Step("check", "Checks", s_wait),
          runner.Step("ai", "Default AI model", plans.s_default_ai)]
 run = runner.start("install", steps, a, plans.secret_values(a), "/tmp")

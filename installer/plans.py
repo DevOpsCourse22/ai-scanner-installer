@@ -636,6 +636,21 @@ def s_first_build(ctx: Ctx) -> None:
                 raise StepFailed("The pipelines did not finish in 90 minutes: " + ", ".join(sorted(pending)))
 
 
+def s_db_password(ctx: Ctx) -> None:
+    """Postgres sets its password only when its volume is first created. A volume
+    that survived an earlier install (minikube's hostpath keeps the folder after
+    the claim is deleted) still has the old one, and the gateway cannot log in.
+    Set the password the Secret holds, through the trusted local socket inside the
+    Pod; the SQL goes in on stdin, never on a command line."""
+    ctx.sh(k(ctx) + ["-n", NS, "rollout", "status", "statefulset/postgres", "--timeout=900s"])
+    pw = ctx.a["generated"]["postgres_password"].replace("'", "''")
+    ctx.sh(k(ctx) + ["-n", NS, "exec", "-i", "postgres-0", "--", "psql", "-q", "-U", "ai_scan_repos",
+                     "-d", "ai_scan_repos", "-v", "ON_ERROR_STOP=1", "-f", "-"],
+           input=f"ALTER USER ai_scan_repos PASSWORD '{pw}';\n", quiet=True)
+    ctx.log("Database password matches the gateway's Secret.")
+    ctx.sh(k(ctx) + ["-n", NS, "rollout", "restart", "deploy/gateway"], check=False, quiet=True)
+
+
 def s_healthy(ctx: Ctx) -> None:
     def synced() -> bool:
         apps = json.loads(ctx.sh(k(ctx) + ["-n", "argocd", "get", "applications", "-o", "json"], quiet=True))["items"]
@@ -767,6 +782,7 @@ def install_plan(a: dict[str, Any]) -> list[Step]:
         Step("jenkins", "Install Jenkins and its pipelines", s_jenkins),
         Step("webhooks", "Connect GitHub webhooks", s_webhooks),
         Step("argocd", "Install Argo CD and the app", s_argocd),
+        Step("database", "Match the database password", s_db_password),
         Step("build", "Build the images (first pipeline run)", s_first_build),
         Step("healthy", "Wait for the app to be healthy", s_healthy),
         Step("ai", "Save the default AI model", s_default_ai),
