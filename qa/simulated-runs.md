@@ -1,5 +1,55 @@
 # Simulated runs: QA findings
 
+## Update 2026-10-10: suite rewritten for the env/<env> branch architecture
+
+`tests/` result: **22 passed** (13 in `test_simulated_runs.py`, 9 in `test_backend.py`), ~23 s.
+The sections further down describe the earlier (overlays-in-deployment-repos) design and are kept for history.
+
+What the fakes do now:
+
+- **Installer repo is real git.** Its GitHub clone URL is mapped to a bare repo in tmp whose `main` holds only a README.
+  Clone, ls-remote, checkout, add, commit, pull --rebase and push all run for real.
+  The three `*-deployment` clones are plain copies, and any `git -C` on them fails the test.
+- **`github.file_text`** serves the real `Jenkinsfile` and `ci/pod.yaml` from `../ai-scanner-{backend,gateway,frontend}`.
+- **`kubectl kustomize`** renders `environments/<env>/<app>` as written. The test then renders a fresh clone of the pushed branch
+  again and compares it with the first output.
+- **`kubectl exec -i deploy/gateway -- python -`** runs the script from stdin in a local python against a stub
+  `review_gateway`. `test_a5` checks the stub against the gateway's real `save_ai`/`get_session` signatures.
+
+What is asserted, per scenario (local minikube, SSH K3s with tailnet and a custom `installer_repo`, EKS with domain and cloud AI, destroys):
+
+- **Repos and branches**
+  - The deployment repos are cloned shallow, never written, and stay byte-identical to the source.
+  - The only pushes go from the installer clone to `HEAD:env/<env>`. On origin, `main` is untouched, and `env/<env>` holds only
+    `environments/<env>/…`, without the BASE_SKIP files in `base/`.
+  - The derived Jenkinsfiles carry the expected header, yamlFile path, `set_env_image`, CODE_OWNER checkout and
+    INSTALLER_REPO deploy, and the pod.yaml files are byte-for-byte originals.
+- **Jenkins**
+  - The env vars are CODE_OWNER, INSTALLER_REPO, DEPLOY_BRANCH, DEPLOY_ENV (and AWS_REGION on EKS).
+  - There is one `pipelineJob` per code repo, with its scriptPath on `env/<env>`.
+  - Builds are triggered at `/job/<repo>/build`, never `/job/main`.
+- **Argo CD**
+  - There is a single repo Secret, `repo-ai-scanner-installer`.
+  - The Applications use `repoURL` = the installer repo, `targetRevision` = `env/<env>`, and `path` = `environments/<env>/<app>`.
+- **Default AI and secrets**
+  - The default AI is saved after `healthy`.
+  - There is no `GATEWAY_DEFAULT_AI_*` env and no `default-ai-key`.
+  - The cloud API key appears only in the exec's stdin. It is not in argv, in the log, in any other stdin, in the rendered
+    manifests, or in the branch (`git grep`).
+- **Upgrade (`test_a3`)**
+  - The existing branch is checked out and pulled.
+  - A tag that Jenkins pushed meanwhile (`review-api:abc1234`) is kept, and the commit is reported as "unchanged".
+  - An admin's earlier AI choice is kept.
+- **Existing cluster secrets (`test_a4`)**: the live Postgres password and settings key are read back, reused in both Secrets,
+  and never logged.
+
+New finding (minor, test-only on Windows):
+
+- **plans.py:359-360 `s_clone`** calls `shutil.rmtree(root, ignore_errors=True)` and then `root.mkdir()`. On Windows, git's object
+  files are read-only, so a second run in the same workdir fails with FileExistsError.
+  - Production runs in a Linux container, where this does not happen. The test clears the dir itself (`force_rmtree`).
+  - Fix if wanted: rmtree with an `onexc` handler that chmods and retries.
+
 Test file: `tests/test_simulated_runs.py`. Run it with
 `"$TEMP/claude-instvenv/Scripts/python" -m pytest tests/test_simulated_runs.py -q`.
 Result against the code as of 2026-10-09 19:20: **6 passed, 3 xfailed**, stable over 4 runs (~6 s).

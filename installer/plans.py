@@ -475,6 +475,20 @@ def s_app_secrets(ctx: Ctx) -> None:
     a, g = ctx.a, ctx.a["generated"]
     ensure_ns(ctx, NS, {"pod-security.kubernetes.io/enforce": "restricted",
                         "pod-security.kubernetes.io/enforce-version": "latest"})
+    # A database (and saved, encrypted AI keys) may outlive the answers file: keep
+    # the values the cluster already uses, or Postgres refuses the new password.
+    import base64
+    for secret, key, name in (("postgres-credentials", "POSTGRES_PASSWORD", "postgres_password"),
+                              ("gateway-secrets", "settings-key", "settings_key")):
+        live = ctx.sh(k(ctx) + ["-n", NS, "get", "secret", secret, "-o", f"jsonpath={{.data.{key}}}"],
+                      check=False, quiet=True).strip()
+        if live and not live.startswith("Error"):
+            value = base64.b64decode(live).decode()
+            if value != g[name]:
+                g[name] = value
+                ctx.run.secrets.append(value)
+                ctx.state["answers_changed"] = True
+                ctx.log(f"Keeping the cluster's existing {secret} value ({key}).")
     secret_apply(ctx, NS, "postgres-credentials", {
         "POSTGRES_USER": "ai_scan_repos", "POSTGRES_PASSWORD": g["postgres_password"],
         "POSTGRES_DB": "ai_scan_repos"})

@@ -31,24 +31,32 @@ shutil.copytree("/repos", repos, ignore=shutil.ignore_patterns(".git", "node_mod
 
 def s_fake_clone(ctx):
     ctx.state["repos_dir"] = str(repos)
+    ctx.state["installer_dir"] = "/tmp/installer"
+    shutil.rmtree("/tmp/installer", ignore_errors=True)
+    Path("/tmp/installer").mkdir()
     ctx.state["git_env"] = {}
+    # the code repos' Jenkinsfile and ci/pod.yaml, from the mounted working trees
+    plans.github.file_text = lambda token, owner, repo, path, ref="main": (
+        Path("/code") / repo / path).read_text(encoding="utf-8")
 
 
 def s_write_and_apply(ctx):
     orig = ctx.sh
 
-    def sh(args, **kw):        # overlays: write files, skip git
+    def sh(args, **kw):        # overlays: write files, skip git (no GitHub in this smoke test)
         if args[0] == "git":
             return ""
         return orig(args, **kw)
     ctx.sh = sh
     plans.s_overlays(ctx)
     ctx.sh = orig
-    for r in ("ai-scanner-backend-deployment", "ai-scanner-gateway-deployment", "ai-scanner-frontend-deployment"):
-        d = repos / r / "overlays" / "local"
-        for f in d.glob("app-patch.yaml"):
-            f.write_text(f.read_text().replace(":bootstrap", f":{TAG}"))
+    for app in ("backend", "gateway", "frontend"):
+        d = Path("/tmp/installer/environments/local") / app
+        f = d / "app-patch.yaml"
+        f.write_text(f.read_text().replace(":bootstrap", f":{TAG}"))
         ctx.sh(plans.k(ctx) + ["apply", "-k", str(d)])
+    for f in Path("/tmp/installer/environments/local/ci").iterdir():
+        ctx.log(f"derived: {f.name} ({len(f.read_text())} bytes)")
 
 
 def s_wait(ctx):
@@ -82,7 +90,8 @@ steps = [runner.Step("connect", "Connect", plans.s_connect),
          runner.Step("addr", "Address", lambda c: c.state.update(public_url="http://localhost")),
          runner.Step("secrets", "Secrets", plans.s_app_secrets),
          runner.Step("apply", "Overlays + apply", s_write_and_apply),
-         runner.Step("check", "Checks", s_wait)]
+         runner.Step("check", "Checks", s_wait),
+         runner.Step("ai", "Default AI model", plans.s_default_ai)]
 run = runner.start("install", steps, a, plans.secret_values(a), "/tmp")
 seen = 0
 while run.status in ("running", "waiting"):

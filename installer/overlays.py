@@ -106,6 +106,8 @@ metadata:
         ops.append({"op": "add", "path": "/parameters", "value": st["parameters"]})
     if not st.get("noexec"):
         ops.append({"op": "remove", "path": "/mountOptions"})
+    if st.get("binding"):
+        ops.append({"op": "replace", "path": "/volumeBindingMode", "value": st["binding"]})
     files["storage-patch.yaml"] = HEAD + yaml.safe_dump(ops, sort_keys=False)
     files["pvc-patch.yaml"] = f"""{HEAD}apiVersion: v1
 kind: PersistentVolumeClaim
