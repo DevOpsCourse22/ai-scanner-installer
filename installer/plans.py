@@ -680,6 +680,9 @@ def s_db_password(ctx: Ctx) -> None:
     the claim is deleted) still has the old one, and the gateway cannot log in.
     Set the password the Secret holds, through the trusted local socket inside the
     Pod; the SQL goes in on stdin, never on a command line."""
+    # Argo CD creates it from git a little after the Applications exist
+    wait_until(ctx, "Argo CD to create the database",
+               lambda: ctx.sh(k(ctx) + ["-n", NS, "get", "statefulset", "postgres", "-o", "name"], quiet=True), 600, 10)
     ctx.sh(k(ctx) + ["-n", NS, "rollout", "status", "statefulset/postgres", "--timeout=900s"])
     pw = ctx.a["generated"]["postgres_password"].replace("'", "''")
     ctx.sh(k(ctx) + ["-n", NS, "exec", "-i", "postgres-0", "--", "psql", "-q", "-U", "ai_scan_repos",
