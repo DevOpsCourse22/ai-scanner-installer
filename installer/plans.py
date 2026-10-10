@@ -849,4 +849,19 @@ def detect_existing(a: dict[str, Any], workdir: str) -> dict[str, Any]:
         out = subprocess.run(k(ctx) + ["get", "namespace", NS, "-o", "name"], capture_output=True, text=True)
         return {"installed": out.returncode == 0, "flavour": ctx.state["flavour"]}
     except Exception as exc:  # noqa: BLE001
-        return {"installed": False, "error": f"{type(exc).__name__}: {exc}"}
+        return {"installed": False, "error": cluster_error(a, str(exc))}
+
+
+def cluster_error(a: dict[str, Any], raw: str) -> str:
+    """kubectl's wall of retries, as one sentence the user can act on."""
+    name = a.get("target", {}).get("context") or a.get("target", {}).get("ssh", {}).get("host") or "the cluster"
+    if "connection refused" in raw or "No connection could be made" in raw:
+        hint = f" Start it (minikube: minikube start -p {name}) or choose another cluster." \
+            if a.get("target", {}).get("kind") == "local" else ""
+        return f"{name} is not running: nothing answers at its address.{hint}"
+    if "TLS handshake timeout" in raw or "i/o timeout" in raw or "context deadline exceeded" in raw:
+        return f"{name} answers too slowly. It may be out of memory; give it at least 8 GB."
+    if "Unauthorized" in raw or "forbidden" in raw.lower():
+        return f"{name} refused the kubeconfig's credentials."
+    last = [ln for ln in raw.strip().splitlines() if ln.strip()]
+    return (last[-1] if last else raw)[:300]
