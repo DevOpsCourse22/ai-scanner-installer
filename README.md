@@ -17,7 +17,9 @@ you can do (a GitHub token, a GitHub OAuth App, `minikube tunnel`).
   repositories and push to this one, created at
   [github.com/settings/tokens](https://github.com/settings/tokens/new?scopes=repo,admin:repo_hook&description=ai-scan-repos-installer)
   with `repo` and `admin:repo_hook`.
-- For minikube: a running cluster with 4 CPUs and 8 GB (`minikube start --cpus 4 --memory 8g`).
+- For minikube: a cluster with at least 8 GB of memory, or the Jenkins builds starve it. A separate
+  profile leaves your other clusters alone: `minikube start -p ai-scan --cpus 6 --memory 10g --container-runtime=docker`
+  (then run the installer with `--network ai-scan`, pick the context `ai-scan`, and use `minikube tunnel -p ai-scan`).
 - For EKS: an AWS account; either a `~/.aws` profile or access keys.
 
 ## Run it

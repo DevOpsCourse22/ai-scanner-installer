@@ -144,6 +144,23 @@ def s_connect(ctx: Ctx) -> None:
     ctx.state["flavour"] = info
     ctx.log(f"Cluster: {info['kind']}, {info['nodes']} node(s), Kubernetes {info['version']}, "
             f"node IP {info['node_ip']}, runtime {info['runtime']}")
+    check_capacity(ctx, info)
+
+
+MIN_MEMORY_GIB = 7.5     # app + Jenkins + Argo CD + one build Pod at a time
+
+
+def check_capacity(ctx: Ctx, info: dict[str, Any]) -> None:
+    """Jenkins builds need room: below ~8 GB the API server itself stops answering."""
+    gib = info.get("memory_gib") or 0
+    if not gib or gib >= MIN_MEMORY_GIB:
+        return
+    cmd = ("minikube start -p ai-scan --cpus 6 --memory 10g --container-runtime=docker"
+           if info["kind"] == "minikube" else "")
+    ctx.wait_for_user(
+        f"This cluster has {gib:.1f} GB of memory; the app with Jenkins and Argo CD needs at least 8 GB, "
+        "or the builds stall. For minikube, create a second, larger cluster (your current one stays as it is), "
+        "restart the installer and choose the context \"ai-scan\". Continue only to try anyway.", command=cmd)
 
 
 def s_terraform(ctx: Ctx) -> None:
@@ -286,7 +303,9 @@ def s_address(ctx: Ctx) -> None:
         url = "http://localhost"
         ctx.wait_for_user("minikube needs a tunnel so your browser can reach the app on http://localhost. "
                           "Run this in a terminal on your computer and leave it open (it may ask for your "
-                          "password), then continue.", command="minikube tunnel")
+                          "password), then continue.",
+                          command="minikube tunnel" + ("" if a["target"].get("context") in (None, "minikube")
+                                                       else f" -p {a['target']['context']}"))
     elif f["kind"] == "k3s":
         url = "http://" + (a["target"]["ssh"]["host"] if a["target"]["kind"] == "ssh" else f["node_ip"])
     else:
@@ -584,56 +603,75 @@ def s_argocd(ctx: Ctx) -> None:
 # --- steps: first build and health -------------------------------------------------
 
 class PortForward:
+    """kubectl port-forward that can be restarted: on a busy cluster it drops."""
+
     def __init__(self, ctx: Ctx, ns: str, svc: str, port: int, local: int):
-        self.p = subprocess.Popen(k(ctx) + ["-n", ns, "port-forward", f"svc/{svc}", f"{local}:{port}"],
-                                  stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=ctx.env)
+        self.args = k(ctx) + ["-n", ns, "port-forward", f"svc/{svc}", f"{local}:{port}"]
+        self.env = ctx.env
         self.url = f"http://127.0.0.1:{local}"
+        self.p: subprocess.Popen | None = None
+        self.restart()
+
+    def restart(self) -> None:
+        if self.p:
+            self.p.terminate()
+        self.p = subprocess.Popen(self.args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=self.env)
         time.sleep(3)
 
     def __enter__(self) -> "PortForward":
         return self
 
     def __exit__(self, *exc: Any) -> None:
-        self.p.terminate()
+        if self.p:
+            self.p.terminate()
 
 
 def s_first_build(ctx: Ctx) -> None:
+    """Build the three images ONE AT A TIME (each build Pod runs tests, BuildKit
+    and Trivy; three at once starve a small cluster), and keep waiting through
+    dropped connections: a busy API server is not a failed build."""
     pw = ctx.a["generated"]["jenkins_password"]
-    jobs = github.CODE_REPOS
     with PortForward(ctx, "jenkins", "jenkins", 8080, 18080) as pf:
-        auth = ("admin", pw)
-        with httpx.Client(base_url=pf.url, auth=auth, timeout=30) as j:
-            crumb = wait_until(ctx, "Jenkins to answer", lambda: j.get("/crumbIssuer/api/json").json(), 300, 5)
-            hdr = {crumb["crumbRequestField"]: crumb["crumb"]}
-            before: dict[str, int] = {}
-            for job in jobs:
-                wait_until(ctx, f"the Jenkins job {job}", lambda: j.get(f"/job/{job}/api/json").status_code == 200, 300, 5)
-                last = j.get(f"/job/{job}/lastBuild/api/json")
-                before[job] = last.json().get("number", 0) if last.status_code == 200 else 0
-                r = j.post(f"/job/{job}/build?delay=0", headers=hdr)
-                if r.status_code >= 400:
-                    raise StepFailed(f"Jenkins refused to start {job} (HTTP {r.status_code}).")
-                ctx.log(f"Jenkins: building {job} (main).")
-            ctx.log("The three pipelines test, build, scan and push the images. This takes a while.")
-            pending = set(jobs)
-            end = time.time() + 90 * 60
-            while pending and time.time() < end:
-                for job in sorted(pending):
-                    r = j.get(f"/job/{job}/lastBuild/api/json")
-                    if r.status_code != 200:
-                        continue
-                    b = r.json()
-                    if b.get("number", 0) <= before[job]:
-                        continue                      # still the previous run
-                    if not b.get("building") and b.get("result"):
-                        if b["result"] != "SUCCESS":
-                            raise StepFailed(f"The {job} pipeline finished with {b['result']}. "
-                                             f"Open Jenkins to see why (build #{b['number']}).")
-                        ctx.log(f"{job}: build #{b['number']} succeeded.")
-                        pending.discard(job)
+        j = httpx.Client(base_url=pf.url, auth=("admin", pw), timeout=30)
+
+        def call(method: str, path: str, **kw: Any) -> httpx.Response:
+            for attempt in range(6):
+                try:
+                    return j.request(method, path, **kw)
+                except httpx.HTTPError:
+                    ctx.log("Jenkins did not answer; reconnecting.", "warn")
+                    time.sleep(10 * (attempt + 1))
+                    pf.restart()
+            raise StepFailed("Lost the connection to Jenkins. The cluster may be short of memory: "
+                             "check `kubectl top nodes` and give it at least 8 GB.")
+
+        crumb = wait_until(ctx, "Jenkins to answer", lambda: call("GET", "/crumbIssuer/api/json").json(), 600, 5)
+        hdr = {crumb["crumbRequestField"]: crumb["crumb"]}
+        for job in github.CODE_REPOS:
+            wait_until(ctx, f"the Jenkins job {job}", lambda: call("GET", f"/job/{job}/api/json").status_code == 200, 300, 5)
+            last = call("GET", f"/job/{job}/lastBuild/api/json")
+            before = last.json().get("number", 0) if last.status_code == 200 else 0
+            r = call("POST", f"/job/{job}/build?delay=0", headers=hdr)
+            if r.status_code >= 400:
+                raise StepFailed(f"Jenkins refused to start {job} (HTTP {r.status_code}).")
+            ctx.log(f"Jenkins: building {job} (test, build, scan, push). This takes a while.")
+            end = time.time() + 60 * 60
+            while time.time() < end:
                 time.sleep(20)
-            if pending:
-                raise StepFailed("The pipelines did not finish in 90 minutes: " + ", ".join(sorted(pending)))
+                r = call("GET", f"/job/{job}/lastBuild/api/json")
+                if r.status_code != 200:
+                    continue
+                b = r.json()
+                if b.get("number", 0) <= before or b.get("building") or not b.get("result"):
+                    continue
+                if b["result"] != "SUCCESS":
+                    raise StepFailed(f"The {job} pipeline finished with {b['result']}. "
+                                     f"Open Jenkins to see why (build #{b['number']}).")
+                ctx.log(f"{job}: build #{b['number']} succeeded.")
+                break
+            else:
+                raise StepFailed(f"The {job} pipeline did not finish in 60 minutes.")
+        j.close()
 
 
 def s_db_password(ctx: Ctx) -> None:

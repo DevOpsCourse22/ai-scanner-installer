@@ -80,10 +80,11 @@ def local_kubeconfig(context: str, out: Path) -> str:
     _embed(user, "client-certificate")
     _embed(user, "client-key")
     url = urlparse(cluster["server"])
-    if url.hostname in LOCAL_NAMES and context == "minikube" and _resolves("minikube"):
-        # started with --network minikube: talk to the node directly (port 8443 inside its network)
+    if url.hostname in LOCAL_NAMES and _resolves(context):
+        # a minikube profile, with the installer started on its Docker network
+        # (--network <profile>): talk to the node directly, port 8443 inside that network
         cluster["tls-server-name"] = "localhost"
-        cluster["server"] = "https://minikube:8443"
+        cluster["server"] = f"https://{context}:8443"
     elif url.hostname in LOCAL_NAMES:
         if url.hostname != "0.0.0.0":
             cluster.setdefault("tls-server-name", url.hostname)
@@ -177,4 +178,14 @@ def flavour(kubectl: list[str], env: dict[str, str] | None = None) -> dict[str, 
     else:
         kind = "other"
     return {"kind": kind, "node_ip": ip, "nodes": len(nodes), "version": version,
-            "runtime": runtime, "arch": labels.get("kubernetes.io/arch", "")}
+            "runtime": runtime, "arch": labels.get("kubernetes.io/arch", ""),
+            "memory_gib": sum(_gib(n["status"].get("allocatable", {}).get("memory", "0")) for n in nodes)}
+
+
+def _gib(q: str) -> float:
+    """A Kubernetes memory quantity (e.g. 16007352Ki, 8Gi) in GiB."""
+    units = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "K": 1e3, "M": 1e6, "G": 1e9}
+    for u in sorted(units, key=len, reverse=True):
+        if q.endswith(u):
+            return float(q[: -len(u)]) * units[u] / 2**30
+    return float(q or 0) / 2**30
