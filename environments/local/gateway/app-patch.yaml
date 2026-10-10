@@ -9,7 +9,7 @@ spec:
     spec:
       containers:
         - name: gateway
-          image: 10.96.100.100:5000/review-gateway:bootstrap
+          image: 10.96.100.100:5000/review-gateway:40233b8
           env:
             - name: GATEWAY_FRONTEND_URL
               value: http://localhost
