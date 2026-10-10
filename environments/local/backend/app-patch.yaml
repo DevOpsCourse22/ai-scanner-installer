@@ -9,9 +9,9 @@ spec:
     spec:
       containers:
         - name: review-api
-          image: 10.96.100.100:5000/review-api:bootstrap
+          image: 10.96.100.100:5000/review-api:1555cb1
           env:
             - name: SCANNER_WORKER_IMAGE
-              value: 10.96.100.100:5000/scanner-worker:bootstrap
+              value: 10.96.100.100:5000/scanner-worker:1555cb1
             - name: LMSTUDIO_BASE_URL
               value: http://lmstudio:1234/v1
