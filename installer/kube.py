@@ -32,17 +32,41 @@ LOCAL_NAMES = {"127.0.0.1", "localhost", "kubernetes.docker.internal", "0.0.0.0"
 HOST_ALIAS = os.environ.get("HOST_ALIAS", "host.docker.internal")
 
 
-def contexts() -> list[dict[str, str]]:
-    """The contexts in the mounted kubeconfig, for the wizard's picker."""
-    if not HOST_KUBE.is_file():
-        return []
-    cfg = yaml.safe_load(HOST_KUBE.read_text(encoding="utf-8")) or {}
-    clusters = {c["name"]: c.get("cluster", {}) for c in cfg.get("clusters", [])}
+def _kubeconfigs() -> list[tuple[Path, dict[str, Any]]]:
+    """Every kubeconfig in the mounted ~/.kube: `config` first, then any other
+    file that holds contexts (KUBECONFIG often points at one of those, e.g.
+    ~/.kube/k3s-exercise/Kube.yml, and minikube writes its contexts there)."""
+    root = HOST_KUBE.parent
+    files = [HOST_KUBE] if HOST_KUBE.is_file() else []
+    if root.is_dir():
+        for f in sorted(root.rglob("*")):
+            if f.is_file() and f != HOST_KUBE and "cache" not in f.parts and f.stat().st_size < 1_000_000 \
+                    and (f.suffix in (".yml", ".yaml", ".conf", "") or f.name == "config"):
+                files.append(f)
     out = []
-    for c in cfg.get("contexts", []):
-        cl = clusters.get(c.get("context", {}).get("cluster", ""), {})
-        out.append({"name": c["name"], "server": cl.get("server", ""),
-                    "current": c["name"] == cfg.get("current-context")})
+    for f in files:
+        try:
+            cfg = yaml.safe_load(f.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            continue
+        if isinstance(cfg, dict) and cfg.get("contexts"):
+            out.append((f, cfg))
+    return out
+
+
+def contexts() -> list[dict[str, str]]:
+    """The contexts in the mounted kubeconfigs, for the wizard's picker."""
+    out, seen = [], set()
+    for f, cfg in _kubeconfigs():
+        clusters = {c["name"]: c.get("cluster", {}) for c in cfg.get("clusters", [])}
+        for c in cfg.get("contexts", []):
+            if c["name"] in seen:
+                continue
+            seen.add(c["name"])
+            cl = clusters.get(c.get("context", {}).get("cluster", ""), {})
+            out.append({"name": c["name"], "server": cl.get("server", ""),
+                        "current": c["name"] == cfg.get("current-context"),
+                        "file": str(f.relative_to(HOST_KUBE.parent))})
     return out
 
 
@@ -71,7 +95,9 @@ def _embed(obj: dict[str, Any], key: str) -> None:
 
 def local_kubeconfig(context: str, out: Path) -> str:
     """Write a self-contained kubeconfig for one context. Returns the server URL."""
-    cfg = yaml.safe_load(HOST_KUBE.read_text(encoding="utf-8"))
+    cfg = next((c for _, c in _kubeconfigs() if any(x["name"] == context for x in c["contexts"])), None)
+    if cfg is None:
+        raise RuntimeError(f"No kubeconfig in the mounted ~/.kube has the context {context!r}.")
     ctx = next(c for c in cfg["contexts"] if c["name"] == context)
     cl = next(c for c in cfg["clusters"] if c["name"] == ctx["context"]["cluster"])
     us = next(u for u in cfg["users"] if u["name"] == ctx["context"]["user"])
