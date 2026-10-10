@@ -1,0 +1,44 @@
+# The shared base of the app and review-api, as one Kustomize unit, complete
+# on its own:
+#
+#   kubectl kustomize .     print exactly what would be applied (changes nothing)
+#
+# Deployed by the Argo CD Application "ai-scan-backend", which points at this
+# repository (path ".", branch main). Argo CD clones ONE repository per
+# Application, so nothing here may refer to another repository (no ../).
+# The gateway and the UI are their own Applications, from
+# ai-scanner-gateway-deployment and ai-scanner-frontend-deployment.
+# Change the cluster by committing here; Argo CD applies the commit.
+#
+# This Application owns the namespace, so it is created first.
+#
+# NOT in here, on purpose (each is once per cluster, see DEPLOY-K3S.md):
+#   - The Secrets (postgres-credentials, gateway-secrets): created from the
+#     command line so no credential is ever in git (DEPLOY-K3S.md, B4).
+#   - The Tailscale operator: a Helm release (DEPLOY-K3S.md, A5-A6).
+#     review-api/lmstudio-egress.yaml only works once it runs.
+#   - job-test/: manual test Jobs. A finished Job cannot be updated, so a
+#     second apply would fail on them.
+#
+# Later: the newTag line is what CI (Jenkins) edits; Argo CD then deploys it.
+apiVersion: kustomize.config.k8s.io/v1beta1       # the Kustomize config format version
+kind: Kustomization                               # this file describes a set of manifests to apply together
+
+resources:                                        # the files to apply (Kustomize sorts by kind: Namespace first, then the rest)
+  # the namespace and shared storage
+  - namespace.yaml                                # the ai-scan-repos namespace, Pod Security "restricted"
+  - storage/storageclass-reports.yaml             # the reports-noexec StorageClass
+  - storage/pvc-reports.yaml                      # the reports volume shared by review-api and every Job
+  # the database
+  - postgres/postgres.yaml                        # Postgres (reads the postgres-credentials Secret)
+  # the internal API and its route to the model
+  - review-api/rbac.yaml                          # review-api's ServiceAccount and permissions
+  - review-api/lmstudio-egress.yaml               # the route to LM Studio through Tailscale
+  - review-api/deployment.yaml                    # review-api Deployment and Service
+  # what the browser reaches (the gateway and UI Services it routes to come from their own repositories)
+  - ingress/ingress.yaml                          # Traefik routes: gateway paths to the gateway, everything else to the UI
+
+images:                                           # rewrite image references in the manifests above (NOT env vars like SCANNER_WORKER_IMAGE)
+  - name: review-api                              # every "image: review-api" ...
+    newName: 10.0.0.39:30500/review-api                    # set by Jenkins: the registry it was pushed to
+    newTag: 1555cb1                               # set by Jenkins: the commit it was built from

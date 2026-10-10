@@ -1,0 +1,102 @@
+# review-api: the internal API that accepts reviews from the gateway and, in
+# kubernetes mode, runs each one as a scanner-worker Job (review_api/k8s_jobs.py).
+# It is only reachable inside the cluster (ClusterIP Service below); the
+# browser talks to the gateway, never to this.
+#
+# Apply through the kustomization (kubectl apply -k k8s/), not with -f on this
+# file alone: the image TAG is set in k8s/kustomization.yaml.
+---
+apiVersion: apps/v1                               # apps API group, where Deployment is defined
+kind: Deployment                                  # keeps N identical Pods running and replaces them on change
+metadata:                                         # identity of the object
+  name: review-api                                # Deployment name (kubectl -n ai-scan-repos get deploy review-api)
+  namespace: ai-scan-repos                        # the application namespace
+spec:                                             # desired state
+  # 1, not more: the pollers that watch each Job live in this process's
+  # memory, so a second replica would not share them. Revisit once review
+  # state moves to Postgres.
+  replicas: 1                                     # run exactly one Pod
+  selector:                                       # how the Deployment finds its own Pods
+    matchLabels:                                  # must match the template's labels
+      app: review-api                             # the label set on the Pod below
+  template:                                       # the Pod that will be created
+    metadata:                                     # the Pod's identity
+      labels:                                     # labels on the Pod
+        app: review-api                           # matched by the selector above and by the Service below
+    spec:                                         # the Pod's spec
+      serviceAccountName: review-api              # run as the ServiceAccount from rbac.yaml, which may create/delete Jobs
+      automountServiceAccountToken: true          # mount that ServiceAccount's token: review-api NEEDS the Kubernetes API
+      securityContext:                            # Pod-level security settings (required by "restricted")
+        runAsNonRoot: true                        # refuse to start if the container would run as root
+        runAsUser: 10001                          # uid 10001, the user the review-api image is built with (backend/Dockerfile: USER 10001)
+        runAsGroup: 10001                         # gid 10001, same as the image (fixes the Trivy LOW "no runAsGroup")
+        seccompProfile:                           # system-call filter
+          type: RuntimeDefault                    # the container runtime's default filter ("restricted" requires one)
+      containers:                                 # the containers in the Pod
+        - name: review-api                        # container name
+          image: review-api                       # image NAME only; the tag comes from kustomization.yaml (images: newTag)
+          imagePullPolicy: IfNotPresent           # use the image already on the node (imported with k3s ctr); only pull if it is missing
+          ports:                                  # ports the container listens on
+            - containerPort: 8000                 # review-api's port (REVIEW_API_PORT default)
+          env:                                    # environment variables for the container
+            - name: REVIEW_API_OUTPUT_DIR         # where reports are read and written
+              value: /reports                     # the reports PVC, mounted below
+            - name: REVIEW_API_EXECUTION_MODE     # how a review runs
+              value: kubernetes                   # as a Kubernetes Job per review (not inside this process)
+            - name: REVIEW_K8S_NAMESPACE          # where to create the Jobs
+              value: ai-scan-repos                # this namespace: the Jobs must be here to mount the reports PVC
+            - name: SCANNER_WORKER_IMAGE          # the image each Job runs (an env var, so kustomize does NOT rewrite it)
+              value: 10.0.0.39:30500/scanner-worker:1555cb1         # a FIXED tag: with :latest Kubernetes always tries to pull, and there is no registry. 0.5.0 = contract v4 (LLM_API_KEY from the per-review Secret, scanner results reused on resume); build and import it first
+            - name: REVIEW_REPORTS_PVC            # the PVC each Job mounts at /reports
+              value: ai-scan-repos-reports        # the PVC in storage/pvc-reports.yaml
+            - name: LMSTUDIO_BASE_URL             # the model endpoint; review-api also passes it to every Job
+              value: http://lmstudio:1234/v1      # the lmstudio egress Service (lmstudio-egress.yaml) -> Tailscale -> LM Studio. The image default, host.docker.internal, does not exist in K3s
+          securityContext:                        # container-level security settings
+            allowPrivilegeEscalation: false       # a process may never gain more privileges than its parent ("restricted" requires this)
+            readOnlyRootFilesystem: true          # the container cannot write to its own filesystem; only to the volumes below
+            capabilities:                         # Linux capabilities
+              drop: ["ALL"]                       # drop every capability ("restricted" requires this)
+          resources:                              # CPU and memory
+            requests:                             # reserved for the Pod when it is scheduled
+              cpu: 200m                           # a fifth of one core: in kubernetes mode the heavy work runs in the Jobs
+              memory: 256Mi                       # 256 MiB of RAM
+            limits:                               # the most it may use
+              cpu: 1                              # one full core (throttled above this)
+              memory: 512Mi                       # 512 MiB (OOMKilled above this)
+          volumeMounts:                           # where volumes appear inside the container
+            - name: reports                       # the "reports" volume below
+              mountPath: /reports                 # same path the Jobs write to, so review-api just checks a file exists
+            - name: tmp                           # the "tmp" volume below
+              mountPath: /tmp                     # a writable temp dir; without it /readyz fails and the Pod is never Ready (the root filesystem is read-only)
+          livenessProbe:                          # "is it still alive, or should it be restarted?"
+            httpGet:                              # an HTTP GET; any 2xx/3xx answer = healthy
+              path: /healthz                      # review-api's liveness endpoint (no auth)
+              port: 8000                          # the container port above
+            initialDelaySeconds: 5                # wait 5 s after start before the first check
+            periodSeconds: 15                     # then check every 15 s
+          readinessProbe:                         # "may it receive traffic yet?"
+            httpGet:                              # an HTTP GET; any 2xx/3xx answer = ready
+              path: /readyz                       # checks /reports and the temp dir are writable
+              port: 8000                          # the container port above
+            initialDelaySeconds: 3                # wait 3 s after start before the first check
+            periodSeconds: 10                     # then check every 10 s
+      volumes:                                    # the volumes the Pod provides (mounted by name above)
+        - name: reports                           # referenced by volumeMounts "reports"
+          persistentVolumeClaim:                  # backed by a PVC (survives Pod restarts)
+            claimName: ai-scan-repos-reports      # the PVC in storage/pvc-reports.yaml
+        - name: tmp                               # referenced by volumeMounts "tmp"
+          emptyDir:                               # an empty folder created with the Pod and deleted with it
+            sizeLimit: 512Mi                      # the Pod is evicted if it writes more than this
+---
+apiVersion: v1                                    # core API group, where Service is defined
+kind: Service                                     # a stable name and virtual IP in front of the Pods
+metadata:                                         # identity of the object
+  name: review-api                                # DNS name inside the namespace: http://review-api:8000 (the gateway uses it)
+  namespace: ai-scan-repos                        # the application namespace
+spec:                                             # how the Service behaves
+  selector:                                       # which Pods receive the traffic
+    app: review-api                               # Pods labelled app=review-api
+  ports:                                          # ports the Service exposes
+    - port: 8000                                  # the port clients connect to
+      targetPort: 8000                            # the container port it forwards to
+  # No "type:" = ClusterIP: reachable only from inside the cluster, on purpose.

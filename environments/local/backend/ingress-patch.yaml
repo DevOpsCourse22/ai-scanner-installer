@@ -1,0 +1,7 @@
+# Written by ai-scanner-installer for this environment. Jenkins edits the image lines.
+- op: replace
+  path: /spec/ingressClassName
+  value: nginx
+- op: add
+  path: /spec/rules/0/host
+  value: localhost

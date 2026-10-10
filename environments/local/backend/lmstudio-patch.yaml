@@ -1,0 +1,7 @@
+# Written by ai-scanner-installer for this environment. Jenkins edits the image lines.
+$patch: delete
+apiVersion: v1
+kind: Service
+metadata:
+  name: lmstudio
+  namespace: ai-scan-repos

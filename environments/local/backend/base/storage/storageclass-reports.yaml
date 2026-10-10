@@ -1,0 +1,20 @@
+# A dedicated StorageClass for the reports PVC, so it can carry mount options.
+# mountOptions cannot be set on a PVC or on a Pod's volumeMount, only on a
+# StorageClass (dynamic provisioning, our case) or a PersistentVolume.
+#
+# KNOWN LIMIT (measured on K3s 2026-09-21): the local-path provisioner does
+# NOT enforce these mount options. They are kept as documented intent for a
+# CSI driver that honours them (for example EBS/EFS on EKS).
+#
+# Cluster-scoped: a StorageClass has no namespace.
+apiVersion: storage.k8s.io/v1                     # the storage API group, where StorageClass lives
+kind: StorageClass                                # the object type: a "recipe" for creating volumes on demand
+metadata:                                         # identity of the object
+  name: reports-noexec                            # the name pvc-reports.yaml asks for in storageClassName
+provisioner: rancher.io/local-path                # K3s's built-in provisioner: a folder on the node's disk
+reclaimPolicy: Retain                             # if the PVC is deleted, KEEP the data on disk instead of deleting it
+volumeBindingMode: WaitForFirstConsumer           # create the volume only when the first Pod using it is scheduled (on that Pod's node)
+mountOptions:                                     # options passed to the mount (see KNOWN LIMIT above)
+  - noexec                                        # files on the volume may not be executed
+  - nosuid                                        # set-uid/set-gid bits are ignored
+  - nodev                                         # device files on the volume are ignored

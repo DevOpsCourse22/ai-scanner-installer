@@ -1,0 +1,8 @@
+# Written by ai-scanner-installer for this environment. Jenkins edits the image lines.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - base
+patches:
+  - path: app-patch.yaml
+  - path: admins-patch.yaml

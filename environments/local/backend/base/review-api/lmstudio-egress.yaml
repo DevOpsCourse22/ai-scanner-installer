@@ -1,0 +1,28 @@
+# The route from the cluster to the model. LM Studio runs on a machine in the
+# tailnet, outside the cluster. The Tailscale operator sees the annotation
+# below, starts an egress proxy Pod (namespace "tailscale") that joins the
+# tailnet, and rewrites this Service's externalName to point at that proxy.
+# review-api and the scanner Jobs only ever use http://lmstudio:1234/v1.
+#
+# Moved from K8S-Tailcale-Egress/LMStudio/tailscale-svc.yml; the only change is
+# the namespace (code-review -> ai-scan-repos). A Service name only resolves
+# inside its own namespace, so it must live where review-api and the Jobs are.
+#
+# Needs the Tailscale operator installed first (k8s/README.md, steps 3-4).
+apiVersion: v1                                    # core API group, where Service is defined
+kind: Service                                     # a network name inside the cluster
+metadata:                                         # identity of the object
+  name: lmstudio                                  # the DNS name the apps use: lmstudio:1234
+  namespace: ai-scan-repos                        # must be the namespace of review-api and the Jobs
+  labels:                                         # labels on the Service
+    app: lmstudio                                 # for kubectl get svc -l app=lmstudio
+  annotations:                                    # instructions for the Tailscale operator
+    tailscale.com/tailnet-ip: "100.93.244.39"     # the tailnet IP of the machine running LM Studio; the operator proxies to it
+spec:                                             # how the Service behaves
+  type: ExternalName                              # a DNS alias (CNAME), not a proxy of its own
+  externalName: placeholder                       # the operator replaces this with its proxy's address; "placeholder" is what the operator docs use
+  ports:                                          # ports (informational for ExternalName)
+    - name: http                                  # port name
+      port: 1234                                  # LM Studio's server port
+      protocol: TCP                               # plain TCP (HTTP on top)
+      targetPort: 1234                            # the same port on the other side

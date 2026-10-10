@@ -1,0 +1,131 @@
+# The gateway: the backend the browser talks to. It does the GitHub OAuth
+# login, keeps sessions in Postgres, checks the user may read the repository,
+# and forwards reviews to review-api inside the cluster. The browser reaches
+# it through the Ingress, on the SAME address as the UI (ingress/ingress.yaml in ai-scanner-backend-deployment).
+#
+# THE PUBLIC ADDRESS lives in this file only, in three env vars below:
+# GATEWAY_FRONTEND_URL, GATEWAY_CORS_ORIGINS and GITHUB_OAUTH_REDIRECT_URI.
+# Default: http://100.111.216.122, the K3s server's tailnet IP, so the app is
+# reachable from the tailnet only. To change it, change all three, and the
+# "Authorization callback URL" of the GitHub OAuth App to match exactly.
+#
+# Site admins (who may change the AI model in Settings) come from the
+# ConfigMap gateway-admins (gateway/admins-configmap.yaml), mounted as a file.
+#
+# Needs the Secret "gateway-secrets" (ai-scanner-backend-deployment, DEPLOY-K3S.md B4). Until it exists
+# the Pod waits in CreateContainerConfigError; it starts on its own once the
+# Secret is created.
+#
+# Apply with this repository's kustomization (Argo CD, or kubectl apply -k .):
+# the image TAG is set in its kustomization.yaml.
+---
+apiVersion: apps/v1                               # apps API group, where Deployment is defined
+kind: Deployment                                  # keeps N identical Pods running and replaces them on change
+metadata:                                         # identity of the object
+  name: gateway                                   # Deployment name
+  namespace: ai-scan-repos                        # the application namespace
+spec:                                             # desired state
+  replicas: 1                                     # one Pod. Sessions are in Postgres, so more would work; one is enough for now
+  selector:                                       # how the Deployment finds its own Pods
+    matchLabels:                                  # must match the template's labels
+      app: gateway                                # the label set on the Pod below
+  template:                                       # the Pod that will be created
+    metadata:                                     # the Pod's identity
+      labels:                                     # labels on the Pod
+        app: gateway                              # matched by the selector above and by the Service below
+    spec:                                         # the Pod's spec
+      automountServiceAccountToken: false         # the gateway never talks to the Kubernetes API, so do not give it a token
+      securityContext:                            # Pod-level security settings (required by "restricted")
+        runAsNonRoot: true                        # refuse to start if the container would run as root
+        runAsUser: 10001                          # uid 10001, the "gateway" user the image creates (gateway/Dockerfile: useradd --uid 10001)
+        seccompProfile:                           # system-call filter
+          type: RuntimeDefault                    # the container runtime's default filter ("restricted" requires one)
+      containers:                                 # the containers in the Pod
+        - name: gateway                           # container name
+          image: review-gateway                   # image NAME only (built from the ai-scanner-gateway repository); the tag comes from kustomization.yaml
+          imagePullPolicy: IfNotPresent           # use the image already on the node (imported with k3s ctr); only pull if it is missing
+          ports:                                  # ports the container listens on
+            - containerPort: 8080                 # the gateway's port (uvicorn in review_gateway/app.py)
+          env:                                    # environment variables for the container
+            - name: REVIEW_API_BASE_URL           # where the gateway sends reviews
+              value: http://review-api:8000       # the review-api Service, by its in-cluster DNS name
+            - name: GATEWAY_FRONTEND_URL          # where the gateway sends the browser after login
+              value: http://100.111.216.122       # PUBLIC ADDRESS: the UI, as the browser sees it (the K3s server's tailnet IP, through the Ingress on port 80)
+            - name: GATEWAY_CORS_ORIGINS          # which browser origins may call the gateway
+              value: http://100.111.216.122       # PUBLIC ADDRESS again (scheme + host, no path); the UI is same-origin, so this is a formality
+            - name: GITHUB_OAUTH_REDIRECT_URI     # where GitHub sends the user back after login
+              value: http://100.111.216.122/auth/github/callback  # PUBLIC ADDRESS + /auth/github/callback; must match the OAuth App's "Authorization callback URL" EXACTLY
+            - name: GATEWAY_COOKIE_SECURE         # mark the login cookie "HTTPS only"?
+              value: "false"                      # false while the address is plain http; set "true" together with TLS on the Ingress
+            - name: GATEWAY_DATABASE_URL          # the session database connection string
+              valueFrom:                          # read the value from somewhere else instead of writing it here
+                secretKeyRef:                     # from a Secret
+                  name: gateway-secrets           # created from the command line (ai-scanner-backend-deployment, DEPLOY-K3S.md B4)
+                  key: database-url               # must start with postgresql+psycopg:// (psycopg 3); plain postgresql:// crashes the Pod
+            - name: GITHUB_WEBHOOK_SECRET         # verifies that webhook calls really come from GitHub
+              valueFrom:                          # read the value from a Secret
+                secretKeyRef:                     # from a Secret
+                  name: gateway-secrets           # same Secret
+                  key: github-webhook-secret      # the key inside it
+            - name: GITHUB_OAUTH_CLIENT_ID        # the GitHub OAuth App's client ID
+              valueFrom:                          # read the value from a Secret
+                secretKeyRef:                     # from a Secret
+                  name: gateway-secrets           # same Secret
+                  key: github-oauth-client-id     # the key inside it
+            - name: GITHUB_OAUTH_CLIENT_SECRET    # the GitHub OAuth App's client secret
+              valueFrom:                          # read the value from a Secret
+                secretKeyRef:                     # from a Secret
+                  name: gateway-secrets           # same Secret
+                  key: github-oauth-client-secret # the key inside it
+            - name: GATEWAY_SETTINGS_KEY          # encrypts the AI service API key saved in Settings
+              valueFrom:                          # read the value from a Secret
+                secretKeyRef:                     # from a Secret
+                  name: gateway-secrets           # same Secret
+                  key: settings-key               # the key inside it (DEPLOY-K3S.md, "AI model and admins")
+                  optional: true                  # without it the Pod still starts; Settings just can't store API keys
+            - name: GATEWAY_ADMINS_FILE           # where the list of site admins is read from
+              value: /etc/ai-scan/admins/admins   # the file the ConfigMap volume below provides
+          volumeMounts:                           # folders mounted into the container
+            - name: admins                        # the volume defined at the bottom of the Pod spec
+              mountPath: /etc/ai-scan/admins      # a whole folder (not subPath), so ConfigMap edits reach the file
+              readOnly: true                      # the gateway only reads it
+          securityContext:                        # container-level security settings
+            allowPrivilegeEscalation: false       # a process may never gain more privileges than its parent ("restricted" requires this)
+            readOnlyRootFilesystem: true          # nothing to write locally: sessions live in Postgres
+            capabilities:                         # Linux capabilities
+              drop: ["ALL"]                       # drop every capability ("restricted" requires this)
+          resources:                              # CPU and memory
+            requests:                             # reserved for the Pod when it is scheduled
+              cpu: 100m                           # a tenth of one core
+              memory: 128Mi                       # 128 MiB of RAM
+            limits:                               # the most it may use
+              cpu: 500m                           # half a core (throttled above this)
+              memory: 256Mi                       # 256 MiB (OOMKilled above this)
+          livenessProbe:                          # "is it still alive, or should it be restarted?"
+            httpGet:                              # an HTTP GET; any 2xx/3xx answer = healthy
+              path: /health                       # the gateway's health endpoint
+              port: 8080                          # the container port above
+            initialDelaySeconds: 5                # wait 5 s after start before the first check
+            periodSeconds: 15                     # then check every 15 s
+          readinessProbe:                         # "may it receive traffic yet?"
+            httpGet:                              # an HTTP GET; any 2xx/3xx answer = ready
+              path: /health                       # same endpoint
+              port: 8080                          # the container port above
+            initialDelaySeconds: 3                # wait 3 s after start before the first check
+            periodSeconds: 10                     # then check every 10 s
+      volumes:                                    # volumes the containers above can mount
+        - name: admins                            # used by the volumeMount above
+          configMap:                              # filled from a ConfigMap
+            name: gateway-admins                  # gateway/admins-configmap.yaml
+---
+apiVersion: v1                                    # core API group, where Service is defined
+kind: Service                                     # a stable name and virtual IP in front of the Pods
+metadata:                                         # identity of the object
+  name: gateway                                   # DNS name inside the namespace: http://gateway:8080 (the Ingress will point here)
+  namespace: ai-scan-repos                        # the application namespace
+spec:                                             # how the Service behaves
+  selector:                                       # which Pods receive the traffic
+    app: gateway                                  # Pods labelled app=gateway
+  ports:                                          # ports the Service exposes
+    - port: 8080                                  # the port clients connect to
+      targetPort: 8080                            # the container port it forwards to

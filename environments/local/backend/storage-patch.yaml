@@ -1,0 +1,9 @@
+# Written by ai-scanner-installer for this environment. Jenkins edits the image lines.
+- op: replace
+  path: /provisioner
+  value: k8s.io/minikube-hostpath
+- op: remove
+  path: /mountOptions
+- op: replace
+  path: /volumeBindingMode
+  value: Immediate

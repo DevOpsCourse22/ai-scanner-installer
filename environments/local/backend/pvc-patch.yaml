@@ -1,0 +1,9 @@
+# Written by ai-scanner-installer for this environment. Jenkins edits the image lines.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ai-scan-repos-reports
+  namespace: ai-scan-repos
+spec:
+  accessModes:
+    - ReadWriteOnce

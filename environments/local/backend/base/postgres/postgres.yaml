@@ -1,0 +1,99 @@
+# Self-hosted Postgres for the course cluster: a headless Service and a
+# one-replica StatefulSet with its own volume. The gateway stores login
+# sessions here. Nothing points at Postgres by a fixed address in code: the
+# gateway reads one connection string from the Secret "gateway-secrets"
+# (key database-url), so moving to RDS later changes that Secret's value only.
+#
+# The Secret "postgres-credentials" is NOT in this file (it used to be, with a
+# placeholder password, which put a credential in git). Create it from the
+# command line before applying; the command is in k8s/README.md. The user name
+# you give it must be ai_scan_repos, because the probes below check that user.
+#
+# Verified on K3s (2026-09-21): this Pod starts under Pod Security "restricted".
+---
+# Headless Service (clusterIP: None): gives the Pod a stable DNS name,
+# postgres-0.postgres.ai-scan-repos.svc.cluster.local, and the short name
+# "postgres" inside the namespace. A database needs "this instance", not a
+# load-balanced virtual IP.
+apiVersion: v1                                    # core API group, where Service is defined
+kind: Service                                     # a stable network name in front of Pods
+metadata:                                         # identity of the object
+  name: postgres                                  # DNS name inside the namespace: postgres:5432
+  namespace: ai-scan-repos                        # same namespace as the gateway that connects to it
+spec:                                             # how the Service behaves
+  clusterIP: None                                 # headless: DNS returns the Pod's own IP, no virtual IP
+  selector:                                       # which Pods this Service points at
+    app: postgres                                 # Pods labelled app=postgres (set in the StatefulSet template below)
+  ports:                                          # ports the Service exposes
+    - port: 5432                                  # the port clients connect to (Postgres default)
+      targetPort: 5432                            # the port inside the container
+---
+apiVersion: apps/v1                               # apps API group, where StatefulSet is defined
+kind: StatefulSet                                 # like a Deployment, but each Pod keeps a fixed name and its own volume
+metadata:                                         # identity of the object
+  name: postgres                                  # Pods will be named postgres-0, postgres-1, ...
+  namespace: ai-scan-repos                        # the application namespace
+spec:                                             # desired state
+  serviceName: postgres                           # the headless Service above, which gives each Pod its DNS name
+  replicas: 1                                     # one instance; replication/HA is out of scope for this project
+  selector:                                       # how the StatefulSet finds its own Pods
+    matchLabels:                                  # must match the template's labels
+      app: postgres                               # the label set on the Pod below
+  template:                                       # the Pod that will be created
+    metadata:                                     # the Pod's identity
+      labels:                                     # labels on the Pod
+        app: postgres                             # matched by the selector above and by the Service
+    spec:                                         # the Pod's spec
+      automountServiceAccountToken: false         # Postgres never talks to the Kubernetes API, so do not give it a token
+      securityContext:                            # Pod-level security settings (required by "restricted")
+        runAsNonRoot: true                        # refuse to start if the container would run as root
+        runAsUser: 999                            # uid 999 = the "postgres" user inside the official image
+        fsGroup: 999                              # mounted volumes are group-owned by 999, so Postgres can write its data
+        seccompProfile:                           # system-call filter
+          type: RuntimeDefault                    # the container runtime's default filter ("restricted" requires one)
+      containers:                                 # the containers in the Pod
+        - name: postgres                          # container name (shows in kubectl logs -c)
+          image: postgres:16.4-alpine             # official image, pinned version (never :latest)
+          ports:                                  # ports the container listens on (documentation for tools)
+            - containerPort: 5432                 # Postgres default port
+          envFrom:                                # load EVERY key of a Secret as environment variables
+            - secretRef:                          # the Secret to read from
+                name: postgres-credentials        # created from the command line (k8s/README.md); keys POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_DB
+          env:                                    # extra environment variables
+            - name: PGDATA                        # where Postgres keeps its data files
+              value: /var/lib/postgresql/data/pgdata  # a SUB-folder of the mount: initdb refuses a non-empty folder, and a fresh volume may contain lost+found
+          securityContext:                        # container-level security settings
+            allowPrivilegeEscalation: false       # a process may never gain more privileges than its parent ("restricted" requires this)
+            capabilities:                         # Linux capabilities
+              drop: ["ALL"]                       # drop every capability ("restricted" requires this)
+            # No readOnlyRootFilesystem here, on purpose: Postgres writes lock
+            # and socket files outside PGDATA. Open item (Trivy HIGH): add
+            # emptyDir volumes for /tmp and /var/run/postgresql, then turn it on.
+          resources:                              # CPU and memory
+            requests:                             # reserved for the Pod when it is scheduled
+              cpu: 250m                           # a quarter of one CPU core
+              memory: 512Mi                       # 512 MiB of RAM
+            limits:                               # the most it may use
+              cpu: 1                              # one full core (throttled above this)
+              memory: 1Gi                         # 1 GiB (killed with OOMKilled above this)
+          volumeMounts:                           # where volumes appear inside the container
+            - name: data                          # the volume from volumeClaimTemplates below
+              mountPath: /var/lib/postgresql/data # the image's data folder; PGDATA is a sub-folder of it
+          readinessProbe:                         # "may this Pod receive traffic yet?"
+            exec:                                 # run a command inside the container
+              command: ["pg_isready", "-U", "ai_scan_repos"]  # Postgres's own "am I accepting connections?" check, as our user
+            initialDelaySeconds: 5                # wait 5 s after start before the first check
+            periodSeconds: 10                     # then check every 10 s
+          livenessProbe:                          # "is this Pod still alive, or should it be restarted?"
+            exec:                                 # run a command inside the container
+              command: ["pg_isready", "-U", "ai_scan_repos"]  # same check as readiness
+            initialDelaySeconds: 15               # give Postgres 15 s to start before the first check
+            periodSeconds: 20                     # then check every 20 s
+  volumeClaimTemplates:                           # StatefulSet only: create one PVC PER POD automatically
+    - metadata:                                   # the PVC's identity
+        name: data                                # PVC will be named data-postgres-0
+      spec:                                       # what storage is requested
+        accessModes: ["ReadWriteOnce"]            # mounted read-write by one node
+        resources:                                # how much storage
+          requests:                               # the minimum size asked for
+            storage: 5Gi                          # 5 GiB (uses the cluster's default StorageClass, local-path on K3s)
