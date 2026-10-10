@@ -9,4 +9,4 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: 10.96.100.100:5000/review-frontend:bootstrap
+          image: 10.96.100.100:5000/review-frontend:f6b7954
