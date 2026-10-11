@@ -10,7 +10,7 @@ const STEPS: { id: StepId; label: string; bar: number }[] = [
   { id: "repos", label: "Repositories", bar: 58 },
   { id: "model", label: "AI model", bar: 64 },
   { id: "people", label: "Admins", bar: 40 },
-  { id: "review", label: "Review", bar: 52 },
+  { id: "review", label: "Main menu", bar: 52 },
   { id: "deploy", label: "Deploy", bar: 76 },
 ];
 
@@ -131,14 +131,20 @@ export default function App() {
         {error ? <p className="alert" role="alert">{error}</p> : null}
         {status === null && !error ? <p className="muted">Starting the installer</p> : null}
         {status && step === "unlock" ? (
-          <Unlock status={status} onOpen={(a) => { setAnswers(a); setSaved(true); setMaxVisited(1); setStep("where"); }} />
+          <Unlock status={status} onOpen={(a) => {
+            setAnswers(a); setSaved(true);
+            if (a.last_result) { setMaxVisited(STEPS.length - 2); setStep("review"); } else { setMaxVisited(1); setStep("where"); }
+          }} />
         ) : null}
         {status && step === "where" ? <Where status={status} a={answers} patch={patch} /> : null}
         {step === "repos" ? <Repos a={answers} patch={patch} /> : null}
         {step === "model" ? <Model a={answers} patch={patch} /> : null}
         {step === "people" ? <People a={answers} patch={patch} /> : null}
         {step === "review" ? <Review a={answers} onRun={() => setStep("deploy")} /> : null}
-        {step === "deploy" ? <Deploy onBack={() => setStep("review")} /> : null}
+        {step === "deploy" ? <Deploy onBack={async () => {
+          setAnswers((await api.getAnswers().catch(() => ({ answers }))).answers);   // picks up the remembered deploy
+          setStep("review");
+        }} /> : null}
 
         {step !== "unlock" && step !== "deploy" ? (
           <>
@@ -619,9 +625,25 @@ function Review({ a, onRun }: { a: Answers; onRun: () => void }) {
     setBusy(false);
   }
 
+  const last = a.last_result;
   return (
     <section className="step">
-      <h1>Ready to deploy</h1>
+      {last ? (
+        <div className="installed">
+          <h1>Your install</h1>
+          <p className="big-link"><a href={last.app_url} target="_blank" rel="noreferrer">{last.app_url}</a></p>
+          <dl className="summary">
+            <div><dt>Last {last.kind === "upgrade" ? "upgrade" : "deploy"}</dt>
+              <dd>{last.finished ? new Date(last.finished).toLocaleString() : "Not set"}</dd></div>
+            <div><dt>Where</dt><dd>{last.target?.kind === "eks" ? `Amazon EKS in ${last.target.region}`
+              : last.target?.kind === "ssh" ? `${last.target.host} over SSH` : `kube context ${last.target?.context}`}</dd></div>
+            {last.jenkins_url ? <div><dt>Jenkins (public)</dt><dd><code>{last.jenkins_url}</code><Copy text={last.jenkins_url} label="Jenkins address" /></dd></div> : null}
+            {last.registry ? <div><dt>Images</dt><dd><code>{last.registry}</code></dd></div> : null}
+          </dl>
+          <Services />
+          <h2 className="change-h">Change it</h2>
+        </div>
+      ) : <h1>Ready to deploy</h1>}
       <dl className="summary">
         {rows.map(([k, v]) => (<div key={k}><dt>{k}</dt><dd>{v}</dd></div>))}
       </dl>
@@ -705,7 +727,7 @@ function Deploy({ onBack }: { onBack: () => void }) {
     [lines, showAll, current]);
   const title = run?.kind === "destroy" ? "Removing" : run?.kind === "upgrade" ? "Upgrading" : "Deploying";
 
-  if (run?.status === "done" && run.kind !== "destroy") return <Done run={run} />;
+  if (run?.status === "done" && run.kind !== "destroy") return <Done run={run} onBack={onBack} />;
 
   return (
     <section className="step">
@@ -727,6 +749,10 @@ function Deploy({ onBack }: { onBack: () => void }) {
       </ol>
 
       {run?.action ? <ActionCard key={run.action.step + run.action.message} action={run.action} /> : null}
+
+      {run?.status === "done" && run.kind === "destroy" ? (
+        <div className="nav"><span /><button type="button" className="btn primary" onClick={onBack}>Main menu</button></div>
+      ) : null}
 
       {failed ? (
         <div className="alert" role="alert">
@@ -794,7 +820,7 @@ function ActionCard({ action }: { action: NonNullable<RunState["action"]> }) {
   );
 }
 
-function Done({ run }: { run: RunState }) {
+function Done({ run, onBack }: { run: RunState; onBack: () => void }) {
   const r = run.result;
   return (
     <section className="step done">
@@ -811,6 +837,9 @@ function Done({ run }: { run: RunState }) {
         {r.jenkins_url ? <div><dt>Jenkins address</dt><dd><code>{r.jenkins_url}</code><Copy text={r.jenkins_url} label="Jenkins address" /></dd></div> : null}
         <div><dt>Images</dt><dd><code>{r.registry}</code></dd></div>
       </dl>
+      <div className="nav"><span />
+        <button type="button" className="btn primary" onClick={onBack}>Main menu</button>
+      </div>
     </section>
   );
 }

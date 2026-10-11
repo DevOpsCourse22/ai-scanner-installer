@@ -152,3 +152,24 @@ def test_derived_jenkinsfiles_keep_the_pipeline_and_deploy_here():
         assert "skipDefaultCheckout()" in out and "stage('Checkout')" in out
         assert f"set_env_image" in out and f"environments/local/ci/{repo}.pod.yaml" in out
         assert "branch 'main'" not in out and "DevOpsCourse22/" + repo + "-deployment" not in out
+
+
+def test_last_deploy_is_remembered_without_its_password(api):
+    from installer import runner
+    client, appmod = api
+    client.post("/api/unlock", json={"passphrase": "longenough1", "new": True})
+    run = runner.Run(kind="install", steps=[])
+    run.status, run.result = "done", {"app_url": "http://x", "passwords": {"all": "pw-secret-123"}}
+    appmod._remember(run)
+    appmod._save()
+    out = client.get("/api/answers").json()["answers"]
+    assert out["last_result"]["app_url"] == "http://x" and "passwords" not in out["last_result"]
+    assert "pw-secret-123" not in str(out)
+    # the wizard sends answers back: it cannot change or drop the remembered deploy
+    client.put("/api/answers", json={"answers": {**out, "last_result": {"app_url": "http://evil"}}})
+    assert appmod._session["answers"]["last_result"]["app_url"] == "http://x"
+    # a finished Remove forgets it
+    gone = runner.Run(kind="destroy", steps=[])
+    gone.status = "done"
+    appmod._remember(gone)
+    assert "last_result" not in appmod._session["answers"]

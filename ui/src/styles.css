@@ -281,3 +281,10 @@ h2 { font-family: var(--display); font-size: 1.2rem; margin: 0 0 6px; letter-spa
 .dot.up { background: var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 25%, transparent); }
 @media (max-width: 820px) { .top-services { margin-left: auto; } .services-list li { grid-template-columns: 14px 1fr; }
   .services-list li > :last-child { grid-column: 2; } }
+
+/* ---------- main menu: the remembered install ---------- */
+.installed .big-link { font-family: var(--display); font-size: clamp(1.3rem, 2.6vw, 1.7rem); margin: 0 0 14px; }
+.installed .big-link a { color: var(--ink); text-decoration: none; background: linear-gradient(transparent 58%, var(--marker) 58%); padding: 0 4px; }
+:root[data-theme="dark"] .installed .big-link a { color: #15201b; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .installed .big-link a { color: #15201b; } }
+.change-h { margin-top: 8px; }

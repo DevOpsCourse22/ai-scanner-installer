@@ -55,6 +55,8 @@ def _set(d: dict[str, Any], path: str, value: Any) -> None:
 def masked(a: dict[str, Any]) -> dict[str, Any]:
     out = copy.deepcopy(a)
     out.pop("generated", None)
+    if isinstance(out.get("last_result"), dict):
+        out["last_result"].pop("passwords", None)     # the Services panel asks for it separately
     for p in SECRET_PATHS:
         if _get(out, p):
             _set(out, p, "")
@@ -147,6 +149,9 @@ def put_answers(body: Answers) -> dict[str, Any]:
             _set(new, p, _get(cur, p))
     _strip_none(new)
     new["generated"] = cur.get("generated", {})
+    new.pop("last_result", None)
+    if cur.get("last_result"):
+        new["last_result"] = cur["last_result"]           # only a finished run writes it
     if cur.get("oauth") and "oauth" not in body.answers:
         new["oauth"] = cur["oauth"]
     _session["answers"] = new
@@ -258,9 +263,28 @@ def _watch_and_save(run: runner.Run) -> None:
                 except Exception:  # noqa: BLE001
                     pass
             if run.status in ("done", "failed"):
+                _remember(run)
                 _save()
                 return
     threading.Thread(target=loop, daemon=True).start()
+
+
+def _remember(run: runner.Run) -> None:
+    """The last finished deploy, kept in the encrypted answers so the main menu
+    shows its links after any number of installer restarts. Remove forgets it."""
+    a = _session["answers"]
+    if a is None:
+        return
+    if run.status == "done" and run.kind == "destroy":
+        a.pop("last_result", None)
+    elif run.status == "done":
+        import datetime
+        a["last_result"] = {**run.result, "kind": run.kind,
+                            "finished": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+                            "target": {"kind": a.get("target", {}).get("kind"),
+                                       "context": a.get("target", {}).get("context"),
+                                       "host": a.get("target", {}).get("ssh", {}).get("host"),
+                                       "region": a.get("target", {}).get("eks", {}).get("region")}}
 
 
 def validate(a: dict[str, Any]) -> list[str]:
