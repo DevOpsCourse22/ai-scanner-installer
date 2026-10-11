@@ -9,9 +9,9 @@ spec:
     spec:
       containers:
         - name: review-api
-          image: 886436933270.dkr.ecr.us-east-1.amazonaws.com/review-api:bootstrap
+          image: 886436933270.dkr.ecr.us-east-1.amazonaws.com/review-api:1555cb1
           env:
             - name: SCANNER_WORKER_IMAGE
-              value: 886436933270.dkr.ecr.us-east-1.amazonaws.com/scanner-worker:bootstrap
+              value: 886436933270.dkr.ecr.us-east-1.amazonaws.com/scanner-worker:1555cb1
             - name: LMSTUDIO_BASE_URL
               value: http://lmstudio:1234/v1
