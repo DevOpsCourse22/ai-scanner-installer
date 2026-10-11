@@ -1,0 +1,9 @@
+# Written by ai-scanner-installer for this environment. Jenkins edits the image lines.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gateway-admins
+  namespace: ai-scan-repos
+data:
+  admins: |
+    Elad-Eytan

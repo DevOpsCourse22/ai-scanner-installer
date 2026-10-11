@@ -1,0 +1,78 @@
+# The React UI (the ai-scanner-frontend repository), served as static files by nginx.
+# It holds no secrets and no state; it only talks to the gateway, through the
+# same address (the Ingress sends the gateway's paths to the gateway).
+#
+# Apply with this repository's kustomization (Argo CD, or kubectl apply -k .):
+# the image TAG is set in its kustomization.yaml.
+---
+apiVersion: apps/v1                               # apps API group, where Deployment is defined
+kind: Deployment                                  # keeps N identical Pods running and replaces them on change
+metadata:                                         # identity of the object
+  name: frontend                                  # Deployment name
+  namespace: ai-scan-repos                        # the application namespace
+spec:                                             # desired state
+  replicas: 1                                     # one Pod is plenty for static files (stateless, so more would also work)
+  selector:                                       # how the Deployment finds its own Pods
+    matchLabels:                                  # must match the template's labels
+      app: frontend                               # the label set on the Pod below
+  template:                                       # the Pod that will be created
+    metadata:                                     # the Pod's identity
+      labels:                                     # labels on the Pod
+        app: frontend                             # matched by the selector above and by the Service below
+    spec:                                         # the Pod's spec
+      automountServiceAccountToken: false         # nginx never talks to the Kubernetes API, so do not give it a token
+      securityContext:                            # Pod-level security settings (required by "restricted")
+        runAsNonRoot: true                        # refuse to start if the container would run as root
+        runAsUser: 101                            # uid 101, the "nginx" user of the nginx-unprivileged base image
+        runAsGroup: 101                           # gid 101, same as the image
+        seccompProfile:                           # system-call filter
+          type: RuntimeDefault                    # the container runtime's default filter ("restricted" requires one)
+      containers:                                 # the containers in the Pod
+        - name: frontend                          # container name
+          image: review-frontend                  # image NAME only (built from the ai-scanner-frontend repository); the tag comes from kustomization.yaml
+          imagePullPolicy: IfNotPresent           # use the image already on the node (imported with k3s ctr); only pull if it is missing
+          ports:                                  # ports the container listens on
+            - containerPort: 8080                 # nginx-unprivileged listens on 8080 (a non-root user cannot bind port 80)
+          securityContext:                        # container-level security settings
+            allowPrivilegeEscalation: false       # a process may never gain more privileges than its parent ("restricted" requires this)
+            readOnlyRootFilesystem: true          # nothing is written to the image; nginx's pid and temp files go to /tmp below
+            capabilities:                         # Linux capabilities
+              drop: ["ALL"]                       # drop every capability ("restricted" requires this)
+          resources:                              # CPU and memory
+            requests:                             # reserved for the Pod when it is scheduled
+              cpu: 25m                            # a fortieth of a core: serving a few static files
+              memory: 32Mi                        # 32 MiB of RAM
+            limits:                               # the most it may use
+              cpu: 250m                           # a quarter core (throttled above this)
+              memory: 128Mi                       # 128 MiB (OOMKilled above this)
+          volumeMounts:                           # where volumes appear inside the container
+            - name: tmp                           # the "tmp" volume below
+              mountPath: /tmp                     # nginx-unprivileged keeps its pid file and temp buffers in /tmp
+          livenessProbe:                          # "is it still alive, or should it be restarted?"
+            httpGet:                              # an HTTP GET; any 2xx/3xx answer = healthy
+              path: /healthz                      # answered by nginx itself (nginx/default.conf in ai-scanner-frontend)
+              port: 8080                          # the container port above
+            initialDelaySeconds: 3                # wait 3 s after start before the first check
+            periodSeconds: 15                     # then check every 15 s
+          readinessProbe:                         # "may it receive traffic yet?"
+            httpGet:                              # an HTTP GET; any 2xx/3xx answer = ready
+              path: /healthz                      # same endpoint
+              port: 8080                          # the container port above
+            initialDelaySeconds: 1                # nginx starts in under a second
+            periodSeconds: 10                     # then check every 10 s
+      volumes:                                    # the volumes the Pod provides (mounted by name above)
+        - name: tmp                               # referenced by volumeMounts "tmp"
+          emptyDir:                               # an empty folder created with the Pod and deleted with it
+            sizeLimit: 64Mi                       # the Pod is evicted if it writes more than this
+---
+apiVersion: v1                                    # core API group, where Service is defined
+kind: Service                                     # a stable name and virtual IP in front of the Pods
+metadata:                                         # identity of the object
+  name: frontend                                  # DNS name inside the namespace: http://frontend:8080 (the Ingress points here)
+  namespace: ai-scan-repos                        # the application namespace
+spec:                                             # how the Service behaves
+  selector:                                       # which Pods receive the traffic
+    app: frontend                                 # Pods labelled app=frontend
+  ports:                                          # ports the Service exposes
+    - port: 8080                                  # the port clients connect to
+      targetPort: 8080                            # the container port it forwards to

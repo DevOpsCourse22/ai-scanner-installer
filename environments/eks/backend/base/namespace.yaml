@@ -1,0 +1,16 @@
+# The one namespace the whole application lives in. Everything in k8s/ uses
+# it: review-api, its scanner Jobs, the gateway, Postgres, the reports PVC and
+# the lmstudio egress Service. One namespace is not a style choice: the Jobs
+# must mount the reports PVC, and a PVC can only be mounted by Pods in its own
+# namespace. (The old second namespace "ai-scan-repos-jobs" was removed for
+# that reason, and Elad's old "code-review" namespace is merged into this one.)
+#
+# Namespaces cannot be renamed (rename = delete + recreate everything inside),
+# so this name is final.
+apiVersion: v1                                    # core API group, version 1: where Namespace is defined
+kind: Namespace                                   # the object type this file creates
+metadata:                                         # identity of the object
+  name: ai-scan-repos                             # the namespace name every other file refers to
+  labels:                                         # labels on the namespace itself
+    pod-security.kubernetes.io/enforce: restricted  # Pod Security Admission: REFUSE any Pod that breaks the "restricted" standard (root, privilege escalation, no seccomp, ...)
+    pod-security.kubernetes.io/enforce-version: latest  # judge Pods by the newest version of that standard this cluster knows

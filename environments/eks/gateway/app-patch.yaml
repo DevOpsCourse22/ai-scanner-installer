@@ -1,0 +1,21 @@
+# Written by ai-scanner-installer for this environment. Jenkins edits the image lines.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: ai-scan-repos
+spec:
+  template:
+    spec:
+      containers:
+        - name: gateway
+          image: 886436933270.dkr.ecr.us-east-1.amazonaws.com/review-gateway:bootstrap
+          env:
+            - name: GATEWAY_FRONTEND_URL
+              value: http://a10774f727b7d4dc2b3a4e768a90a750-5c8fee62cc3cb898.elb.us-east-1.amazonaws.com
+            - name: GATEWAY_CORS_ORIGINS
+              value: http://a10774f727b7d4dc2b3a4e768a90a750-5c8fee62cc3cb898.elb.us-east-1.amazonaws.com
+            - name: GITHUB_OAUTH_REDIRECT_URI
+              value: http://a10774f727b7d4dc2b3a4e768a90a750-5c8fee62cc3cb898.elb.us-east-1.amazonaws.com/auth/github/callback
+            - name: GATEWAY_COOKIE_SECURE
+              value: "false"

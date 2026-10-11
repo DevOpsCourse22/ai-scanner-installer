@@ -1,0 +1,68 @@
+# The one way into the cluster from a browser. K3s ships Traefik as its
+# ingress controller, listening on ports 80/443 of the node, so this makes the
+# app reachable at http://<K3s server address>/.
+#
+# ONE address for both the UI and the gateway, split by path. The React app is
+# built with an empty VITE_GATEWAY_URL, so it calls "/auth/me", "/reviews", ...
+# on the same address it was loaded from. Same origin means no CORS, and the
+# gateway's login cookie is sent without any SameSite trouble.
+#
+# The gateway's routes (gateway/src/review_gateway/app.py) are listed below
+# one by one. Everything else goes to the UI. A new top-level gateway route
+# must be added here too, or the browser gets the UI's index.html instead.
+#
+# No "host:" on the rule, on purpose: it answers on ANY address that reaches
+# Traefik (the tailnet IP, a MagicDNS name, localhost on the server). Add a
+# host once there is a real DNS name, and TLS with it.
+apiVersion: networking.k8s.io/v1                  # the networking API group, where Ingress is defined
+kind: Ingress                                     # HTTP routing rules for the ingress controller
+metadata:                                         # identity of the object
+  name: ai-scan-repos                             # Ingress name
+  namespace: ai-scan-repos                        # must be the namespace of the Services it routes to
+spec:                                             # the routing rules
+  ingressClassName: traefik                       # handled by K3s's built-in Traefik (kubectl get ingressclass)
+  rules:                                          # list of rules; one here
+    - http:                                       # HTTP rules for any host (no "host:" set)
+        paths:                                    # longest matching prefix wins
+          - path: /auth                           # GitHub login, callback, /auth/me, logout
+            pathType: Prefix                      # matches /auth and everything under /auth/
+            backend:                              # where matching requests go
+              service:                            # to a Service
+                name: gateway                     # the gateway Service (gateway/deployment.yaml)
+                port:                             # on which Service port
+                  number: 8080                    # the gateway's port
+          - path: /reviews                        # start, list, read, restart and delete reviews, file progress, reports
+            pathType: Prefix                      # matches /reviews and everything under /reviews/
+            backend:                              # where matching requests go
+              service:                            # to a Service
+                name: gateway                     # the gateway Service
+                port:                             # on which Service port
+                  number: 8080                    # the gateway's port
+          - path: /providers                      # AI providers and models, and the site-wide AI model setting (/providers/ai, /providers/ai/presets, /providers/ai/test)
+            pathType: Prefix                      # /providers and everything under /providers/ (Exact sent /providers/ai to the UI, which answered with index.html)
+            backend:                              # where matching requests go
+              service:                            # to a Service
+                name: gateway                     # the gateway Service
+                port:                             # on which Service port
+                  number: 8080                    # the gateway's port
+          - path: /webhook                        # GitHub webhook deliveries (only reachable by GitHub once the address is public)
+            pathType: Exact                       # exactly /webhook
+            backend:                              # where matching requests go
+              service:                            # to a Service
+                name: gateway                     # the gateway Service
+                port:                             # on which Service port
+                  number: 8080                    # the gateway's port
+          - path: /health                         # the gateway's health check, handy to test the route from a browser
+            pathType: Exact                       # exactly /health (the UI's own /healthz is not affected)
+            backend:                              # where matching requests go
+              service:                            # to a Service
+                name: gateway                     # the gateway Service
+                port:                             # on which Service port
+                  number: 8080                    # the gateway's port
+          - path: /                               # everything else: the React app and its assets
+            pathType: Prefix                      # matches every path (the shortest prefix, so it only wins when nothing above does)
+            backend:                              # where matching requests go
+              service:                            # to a Service
+                name: frontend                    # the frontend Service (frontend/deployment.yaml)
+                port:                             # on which Service port
+                  number: 8080                    # nginx's port

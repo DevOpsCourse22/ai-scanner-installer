@@ -1,0 +1,12 @@
+# Written by ai-scanner-installer for this environment. Jenkins edits the image lines.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+  namespace: ai-scan-repos
+spec:
+  template:
+    spec:
+      containers:
+        - name: frontend
+          image: 886436933270.dkr.ecr.us-east-1.amazonaws.com/review-frontend:bootstrap

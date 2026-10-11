@@ -1,0 +1,43 @@
+# What review-api is allowed to do in the Kubernetes API, and nothing more.
+# Derived from the calls review_api/k8s_jobs.py actually makes (checked
+# 2026-09-30): create_namespaced_job, delete_namespaced_job,
+# create_namespaced_secret, delete_namespaced_secret, read_namespaced_job_status.
+# Not granted on purpose: get/list on Jobs or Pods. Their spec carries each
+# review's env (REPO_URL, SYSTEM_PROMPT), so reading them would expose what
+# every user is scanning. Failure reasons come from <id>.error.json on the PVC
+# instead.
+---
+apiVersion: v1                                    # core API group, where ServiceAccount is defined
+kind: ServiceAccount                              # an identity for Pods (like a user account, for a program)
+metadata:                                         # identity of the object
+  name: review-api                                # used in review-api/deployment.yaml as serviceAccountName
+  namespace: ai-scan-repos                        # the application namespace
+---
+apiVersion: rbac.authorization.k8s.io/v1          # the RBAC API group
+kind: Role                                        # a set of permissions valid in ONE namespace (a ClusterRole would be cluster-wide)
+metadata:                                         # identity of the object
+  name: review-api-role                           # referenced by the RoleBinding below
+  namespace: ai-scan-repos                        # permissions apply only inside this namespace
+rules:                                            # the list of allowed actions
+  - apiGroups: ["batch"]                          # the API group Jobs live in
+    resources: ["jobs"]                           # Job objects
+    verbs: ["create", "delete"]                   # start a review Job; delete it on cancel, retry or cleanup
+  - apiGroups: [""]                               # "" = the core API group, where Secrets live
+    resources: ["secrets"]                        # Secret objects
+    verbs: ["create", "delete"]                   # a short-lived Secret per Job holding the user's GitHub token, deleted with the Job
+  - apiGroups: ["batch"]                          # the API group Jobs live in
+    resources: ["jobs/status"]                    # ONLY the status sub-resource of a Job (succeeded/failed counts), not its spec
+    verbs: ["get"]                                # read a Job's status while polling it
+---
+apiVersion: rbac.authorization.k8s.io/v1          # the RBAC API group
+kind: RoleBinding                                 # connects a Role to an identity
+metadata:                                         # identity of the object
+  name: review-api-role-binding                   # any name; this one says what it binds
+  namespace: ai-scan-repos                        # the namespace the permissions are granted in
+subjects:                                         # WHO gets the permissions
+  - kind: ServiceAccount                          # a ServiceAccount (not a human user)
+    name: review-api                              # the ServiceAccount defined above
+roleRef:                                          # WHICH permissions (cannot be changed after creation)
+  kind: Role                                      # a namespaced Role
+  name: review-api-role                           # the Role defined above
+  apiGroup: rbac.authorization.k8s.io             # the API group of Role

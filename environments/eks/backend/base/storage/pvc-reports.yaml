@@ -1,0 +1,20 @@
+# The shared reports volume. review-api mounts it, and every scanner-worker Job
+# mounts it too: the Job writes <id>.json, <id>.error.json, <id>.progress.json
+# and the resume checkpoint here, and review-api reads them. It holds reports
+# and checkpoints ONLY, never a cloned repository (the clone lives in the Job's
+# own emptyDir and dies with the Pod).
+#
+# The name must match REVIEW_REPORTS_PVC in review-api/deployment.yaml
+# (default in review_api/k8s_jobs.py: ai-scan-repos-reports).
+apiVersion: v1                                    # core API group, where PersistentVolumeClaim is defined
+kind: PersistentVolumeClaim                       # a request for storage; the provisioner creates the actual volume
+metadata:                                         # identity of the object
+  name: ai-scan-repos-reports                     # the name review-api and every Job mount by
+  namespace: ai-scan-repos                        # a PVC belongs to one namespace; only Pods in it can mount it
+spec:                                             # what storage is requested
+  storageClassName: reports-noexec                # use the StorageClass in storageclass-reports.yaml, not the cluster default
+  accessModes:                                    # how the volume may be mounted
+    - ReadWriteOnce                               # read-write by Pods on ONE node. Fine on single-node K3s; EKS will need ReadWriteMany (EFS)
+  resources:                                      # how much storage
+    requests:                                     # the minimum size asked for
+      storage: 5Gi                                # 5 GiB: reports are JSON, so this is plenty

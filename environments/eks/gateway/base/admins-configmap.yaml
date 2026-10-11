@@ -1,0 +1,21 @@
+# Who may change site-wide settings (today: the AI model in Settings).
+# One GitHub username per line; "#" starts a comment. "id:<number>" (the
+# GitHub account id) also works and survives a rename.
+#
+# The gateway mounts this as the file /etc/ai-scan/admins/admins and re-reads
+# it on its own, so a change needs NO restart: Kubernetes updates the file
+# within about a minute. Change it with either:
+#
+#   kubectl -n ai-scan-repos edit configmap gateway-admins
+#   (or edit this file, commit and push: Argo CD applies it; without Argo CD, kubectl apply -k .)
+#
+# Everyone not listed sees the AI model setting read-only.
+---
+apiVersion: v1                                    # core API group, where ConfigMap is defined
+kind: ConfigMap                                   # plain (non-secret) configuration, mountable as files
+metadata:                                         # identity of the object
+  name: gateway-admins                            # mounted by gateway/deployment.yaml
+  namespace: ai-scan-repos                        # the application namespace
+data:                                             # each key becomes one file in the mounted folder
+  admins: |                                       # the file "admins"
+    Elad-Eytan

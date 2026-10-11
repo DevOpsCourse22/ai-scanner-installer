@@ -1,0 +1,7 @@
+# Written by ai-scanner-installer for this environment. Jenkins edits the image lines.
+- op: replace
+  path: /spec/ingressClassName
+  value: nginx
+- op: add
+  path: /spec/rules/0/host
+  value: a10774f727b7d4dc2b3a4e768a90a750-5c8fee62cc3cb898.elb.us-east-1.amazonaws.com

@@ -1,0 +1,15 @@
+# Written by ai-scanner-installer for this environment. Jenkins edits the image lines.
+- op: replace
+  path: /provisioner
+  value: efs.csi.aws.com
+- op: add
+  path: /parameters
+  value:
+    provisioningMode: efs-ap
+    fileSystemId: fs-01cde1331a69646ad
+    directoryPerms: '770'
+    uid: '10001'
+    gid: '10001'
+    basePath: /reports
+- op: remove
+  path: /mountOptions

@@ -1,0 +1,17 @@
+# Written by ai-scanner-installer for this environment. Jenkins edits the image lines.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: review-api
+  namespace: ai-scan-repos
+spec:
+  template:
+    spec:
+      containers:
+        - name: review-api
+          image: 886436933270.dkr.ecr.us-east-1.amazonaws.com/review-api:bootstrap
+          env:
+            - name: SCANNER_WORKER_IMAGE
+              value: 886436933270.dkr.ecr.us-east-1.amazonaws.com/scanner-worker:bootstrap
+            - name: LMSTUDIO_BASE_URL
+              value: http://lmstudio:1234/v1
