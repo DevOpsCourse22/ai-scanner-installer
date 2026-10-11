@@ -9,7 +9,7 @@ spec:
     spec:
       containers:
         - name: gateway
-          image: 886436933270.dkr.ecr.us-east-1.amazonaws.com/review-gateway:bootstrap
+          image: 886436933270.dkr.ecr.us-east-1.amazonaws.com/review-gateway:40233b8
           env:
             - name: GATEWAY_FRONTEND_URL
               value: http://a10774f727b7d4dc2b3a4e768a90a750-5c8fee62cc3cb898.elb.us-east-1.amazonaws.com
