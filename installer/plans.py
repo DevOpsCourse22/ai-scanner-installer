@@ -30,7 +30,7 @@ from typing import Any, Callable
 
 import httpx
 
-from . import github, kube, overlays, pipelines, platform
+from . import github, kube, overlays, pipelines, platform, tls
 from .runner import Ctx, NeedsUser, Step, StepFailed
 
 NS = "ai-scan-repos"
@@ -47,8 +47,8 @@ def secret_values(a: dict[str, Any]) -> list[str]:
             a.get("oauth", {}).get("client_secret", ""),
             t.get("ssh", {}).get("sudo_password", ""), t.get("eks", {}).get("aws_secret_access_key", "")]
     vals += [v for v in gen.values() if isinstance(v, str)]
-    key = t.get("ssh", {}).get("private_key", "")
-    vals += [line for line in key.splitlines() if len(line) > 20]
+    for key in (t.get("ssh", {}).get("private_key", ""), (a.get("tls") or {}).get("key", "")):
+        vals += [line for line in key.splitlines() if len(line) > 20]
     return [v for v in vals if v]
 
 
@@ -76,11 +76,12 @@ def apply_text(ctx: Ctx, text: str) -> None:
     ctx.sh(k(ctx) + ["apply", "-f", "-"], input=text)
 
 
-def secret_apply(ctx: Ctx, ns: str, name: str, data: dict[str, str], labels: dict[str, str] | None = None) -> None:
+def secret_apply(ctx: Ctx, ns: str, name: str, data: dict[str, str], labels: dict[str, str] | None = None,
+                 kind: str = "Opaque") -> None:
     """Create or update a Secret from values passed on stdin (never on a command line)."""
     import base64
     obj = {"apiVersion": "v1", "kind": "Secret", "metadata": {"name": name, "namespace": ns,
-           "labels": labels or {}}, "type": "Opaque",
+           "labels": labels or {}}, "type": kind,
            "data": {kk: base64.b64encode(v.encode()).decode() for kk, v in data.items()}}
     ctx.log(f"Secret {ns}/{name}: {', '.join(data)}")
     # server-side apply: client-side apply would copy the values into an annotation
@@ -173,7 +174,7 @@ def s_terraform(ctx: Ctx) -> None:
         shutil.copy(f, work / f.name)
     tfvars = {"name": e.get("name") or "ai-scan-repos", "region": e["region"],
               "node_type": e.get("node_type") or "t3.large", "node_count": int(e.get("node_count") or 2),
-              "domain": e.get("domain") or "",
+              "domain": "" if has_tls(ctx.a) else (e.get("domain") or ""),
               "admin_arns": [x.strip() for x in re.split(r"[,\s]+", e.get("admin_arns") or "")
                              if x.strip().startswith("arn:aws:iam::")]}
     (work / "installer.auto.tfvars.json").write_text(json.dumps(tfvars), encoding="utf-8")
@@ -304,12 +305,7 @@ def s_address(ctx: Ctx) -> None:
                               lambda: lb_address(ctx, "ingress-nginx", "ingress-nginx-controller"), 600)
             url = "http://" + host
     elif f["kind"] == "minikube":
-        url = "http://localhost"
-        ctx.wait_for_user("minikube needs a tunnel so your browser can reach the app on http://localhost. "
-                          "Run this in a terminal on your computer and leave it open (it may ask for your "
-                          "password), then continue.",
-                          command="minikube tunnel" + ("" if a["target"].get("context") in (None, "minikube")
-                                                       else f" -p {a['target']['context']}"))
+        url = "https://localhost" if has_tls(a) else "http://localhost"
     elif f["kind"] == "k3s":
         url = "http://" + (a["target"]["ssh"]["host"] if a["target"]["kind"] == "ssh" else f["node_ip"])
     else:
@@ -319,6 +315,14 @@ def s_address(ctx: Ctx) -> None:
             url = "http://localhost"
     ctx.state["public_url"] = url
     ctx.log(f"The app's address: {url}")
+    if f["kind"] == "minikube":
+        host = urllib.parse.urlparse(url).hostname or "localhost"
+        extra = "" if host in ("localhost", "127.0.0.1") else \
+            f" Also make {host} resolve to 127.0.0.1 on your computer (hosts file), so the browser reaches the tunnel."
+        ctx.wait_for_user("minikube needs a tunnel so your browser can reach the app. Run this in a terminal on "
+                          "your computer and leave it open (it may ask for your password), then continue." + extra,
+                          command="minikube tunnel" + ("" if a["target"].get("context") in (None, "minikube")
+                                                       else f" -p {a['target']['context']}"))
     if a["target"]["kind"] == "eks" and a["target"]["eks"].get("domain"):
         host = wait_until(ctx, "the load balancer's address",
                           lambda: lb_address(ctx, "ingress-nginx", "ingress-nginx-controller"), 600)
@@ -364,6 +368,12 @@ def s_tailscale(ctx: Ctx) -> None:
 
 
 # --- steps: repos and overlays ---------------------------------------------------
+
+def has_tls(a: dict[str, Any]) -> bool:
+    """An uploaded HTTPS certificate (and its key) is in the answers."""
+    t = a.get("tls") or {}
+    return bool(t.get("cert") and t.get("key"))
+
 
 def installer_repo(a: dict[str, Any]) -> str:
     """owner/name of THIS repository, where each install keeps its manifests."""
@@ -456,7 +466,8 @@ def s_overlays(ctx: Ctx) -> None:
             registry=reg, tag=keep_tag("backend", "review-api"), worker_tag=keep_tag("backend", "scanner-worker"),
             ai_mode=ai["mode"], model_url=_model_url(ctx), tailnet_ip=ai.get("tailnet_ip", ""),
             tailnet_port=ai.get("tailnet_port") or 1234, ingress_class=ctx.state["ingress_class"],
-            public_url=ctx.state["public_url"], storage=_storage(ctx))),
+            public_url=ctx.state["public_url"], storage=_storage(ctx),
+            tls_secret=tls.SECRET if has_tls(a) else "")),
         "gateway": overlays.gateway(dict(
             registry=reg, tag=keep_tag("gateway", "review-gateway"),
             public_url=ctx.state["public_url"], admins=a["admins"])),
@@ -524,6 +535,9 @@ def s_app_secrets(ctx: Ctx) -> None:
         "settings-key": g["settings_key"],
     }
     secret_apply(ctx, NS, "gateway-secrets", data)
+    if has_tls(a):
+        secret_apply(ctx, NS, tls.SECRET, {"tls.crt": a["tls"]["cert"].strip() + "\n",
+                                          "tls.key": a["tls"]["key"].strip() + "\n"}, kind="kubernetes.io/tls")
     # a running gateway reads Secrets only at start
     ctx.sh(k(ctx) + ["-n", NS, "rollout", "restart", "deploy/gateway"], check=False, quiet=True)
 

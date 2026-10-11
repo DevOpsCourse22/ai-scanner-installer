@@ -173,3 +173,45 @@ def test_last_deploy_is_remembered_without_its_password(api):
     gone.status = "done"
     appmod._remember(gone)
     assert "last_result" not in appmod._session["answers"]
+
+
+def _self_signed(names, days=30):
+    import datetime
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+    key = ec.generate_private_key(ec.SECP256R1())
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, names[0])]))
+            .issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, names[0])]))
+            .public_key(key.public_key()).serial_number(1).not_valid_before(now - datetime.timedelta(days=1))
+            .not_valid_after(now + datetime.timedelta(days=days))
+            .add_extension(x509.SubjectAlternativeName([x509.DNSName(n) for n in names]), critical=False)
+            .sign(key, hashes.SHA256()))
+    return (cert.public_bytes(serialization.Encoding.PEM).decode(),
+            key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                              serialization.NoEncryption()).decode())
+
+
+def test_uploaded_certificate_is_checked():
+    from installer import tls
+    cert, key = _self_signed(["*.example.com", "example.com"])
+    assert tls.check(cert, key, "scan.example.com")["ok"]
+    assert not tls.check(cert, key, "scan.other.org")["ok"]
+    assert not tls.check(cert, key, "10.0.0.5")["ok"]
+    _, other_key = _self_signed(["x.example.com"])
+    assert "does not belong" in " ".join(tls.check(cert, other_key, "scan.example.com")["problems"])
+    old, old_key = _self_signed(["scan.example.com"], days=-1)
+    assert "expired" in " ".join(tls.check(old, old_key, "scan.example.com")["problems"])
+    assert not tls.check("not a cert", key, "scan.example.com")["ok"]
+
+
+def test_certificate_puts_tls_on_the_ingress():
+    from installer import overlays
+    files = overlays.backend(dict(registry="r", tag="t", worker_tag="t", ai_mode="cloud", ingress_class="nginx",
+                                  public_url="https://scan.example.com", tls_secret="ai-scan-tls",
+                                  storage=dict(provisioner="p")))
+    patch = yaml.safe_load(files["ingress-patch.yaml"])
+    assert {"op": "add", "path": "/spec/tls",
+            "value": [{"hosts": ["scan.example.com"], "secretName": "ai-scan-tls"}]} in patch

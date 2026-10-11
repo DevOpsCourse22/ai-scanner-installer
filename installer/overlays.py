@@ -98,6 +98,10 @@ metadata:
     host = urlparse(o.get("public_url") or "").hostname or ""
     if host and not _is_ip(host):
         ing.append({"op": "add", "path": "/spec/rules/0/host", "value": host})
+        if o.get("tls_secret"):
+            # HTTPS with the uploaded certificate (a kubernetes.io/tls Secret)
+            ing.append({"op": "add", "path": "/spec/tls",
+                        "value": [{"hosts": [host], "secretName": o["tls_secret"]}]})
     files["ingress-patch.yaml"] = HEAD + yaml.safe_dump(ing, sort_keys=False)
     st = o["storage"]
     # JSON 6902 ops: a StorageClass has no list keys for a merge patch to use

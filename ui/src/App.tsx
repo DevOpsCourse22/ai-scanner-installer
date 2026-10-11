@@ -369,6 +369,7 @@ function Where({ status, a, patch }: StepProps & { status: Status }) {
                hint="Only if people will reach the app on another address, like a DNS name you point at it."
                onChange={(v) => patch((x) => { x.public_url = v.trim() || undefined; })} />
       ) : null}
+      {kind ? <TlsFields a={a} patch={patch} /> : null}
     </section>
   );
 }
@@ -905,5 +906,62 @@ function Services({ onClose }: { onClose?: () => void }) {
         <span className="hint">If a link does not load, restart the installer with {st?.publish ?? "-p 127.0.0.1:8081-8083:8081-8083"} in docker run.</span>
       </p>
     </section>
+  );
+}
+
+/** Optional HTTPS certificate: a PEM certificate (with its chain) and its private key.
+    Read in the browser, sent only to the installer on localhost, kept encrypted. */
+function TlsFields({ a, patch }: StepProps) {
+  const t = a.tls ?? {};
+  const [open, setOpen] = useState(Boolean(t.cert || t.key_saved));
+  const [res, setRes] = useState<{ ok: boolean; problems?: string[]; names?: string[]; expires?: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+  const read = (field: "cert" | "key") => (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    f.text().then((text) => { setRes(null); patch((x) => { x.tls = { ...(x.tls ?? {}), [field]: text }; }); });
+  };
+  async function check() {
+    setBusy(true);
+    try {
+      await api.save(a);
+      setRes(await fetch("/api/check/tls").then((r) => r.json()));
+    } catch (e) { setRes({ ok: false, problems: [(e as Error).message] }); }
+    setBusy(false);
+  }
+  if (!open) {
+    return <p className="row"><button type="button" className="link" onClick={() => setOpen(true)}>Add an HTTPS certificate (optional)</button></p>;
+  }
+  return (
+    <div className="tls">
+      <h2>HTTPS certificate</h2>
+      <p className="hint">Your own certificate for the app address above, which must then start with https:// and use a
+        name the certificate covers (EKS: or the domain). Leave both empty for plain http.</p>
+      <div className="grid2">
+        <div className="field">
+          <label htmlFor="tls-cert">Certificate (.crt / .pem, with its chain)</label>
+          <input id="tls-cert" type="file" accept=".crt,.pem,.cer,text/plain" onChange={read("cert")} />
+          {t.cert ? <p className="hint">Loaded ({t.cert.split("BEGIN CERTIFICATE").length - 1} certificate(s)).</p> : null}
+        </div>
+        <div className="field">
+          <label htmlFor="tls-key">Private key (.key / .pem, not encrypted)</label>
+          <input id="tls-key" type="file" accept=".key,.pem,text/plain" onChange={read("key")} />
+          {t.key ? <p className="hint">Loaded.</p> : t.key_saved ? <p className="hint">Saved. Choose a file to replace it.</p> : null}
+        </div>
+      </div>
+      <p className="row">
+        <button type="button" className="btn ghost" disabled={busy || !(t.cert && (t.key || t.key_saved))} onClick={check}>
+          {busy ? "Checking" : "Check certificate"}
+        </button>
+        <button type="button" className="link" onClick={() => { setRes(null); patch((x) => { x.tls = { cert: "", key: "" }; }); }}>
+          Remove certificate
+        </button>
+      </p>
+      {res ? (res.ok ? (
+        <p className="okText">Matches its key; covers {res.names?.join(", ")}; valid until {res.expires?.slice(0, 10)}.</p>
+      ) : (
+        <div className="alert" role="alert"><ul>{(res.problems ?? []).map((m) => <li key={m}>{m}</li>)}</ul></div>
+      )) : null}
+    </div>
   );
 }

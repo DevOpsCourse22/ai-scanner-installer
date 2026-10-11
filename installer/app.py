@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import github, kube, plans, runner, services, vault
+from . import github, kube, plans, runner, services, tls, vault
 
 app = FastAPI(title="ai-scanner-installer")
 UI = Path(os.environ.get("INSTALLER_UI", Path(__file__).resolve().parent.parent / "ui" / "dist"))
@@ -32,7 +32,8 @@ WORKDIR = tempfile.mkdtemp(prefix="installer-")
 # Paths to secret values inside the answers (dotted). Masked on the way out,
 # kept when the wizard sends them back empty.
 SECRET_PATHS = ["repos.token", "ai.api_key", "ai.ts_client_secret", "oauth.client_secret",
-                "target.ssh.private_key", "target.ssh.sudo_password", "target.eks.aws_secret_access_key"]
+                "target.ssh.private_key", "target.ssh.sudo_password", "target.eks.aws_secret_access_key",
+                "tls.key"]
 
 _session: dict[str, Any] = {"answers": None, "passphrase": None}
 
@@ -148,6 +149,8 @@ def put_answers(body: Answers) -> dict[str, Any]:
         if not _get(new, p) and _get(cur, p):
             _set(new, p, _get(cur, p))
     _strip_none(new)
+    if not (new.get("tls") or {}).get("cert"):
+        new.pop("tls", None)                  # "Remove certificate" also drops the saved key
     new["generated"] = cur.get("generated", {})
     new.pop("last_result", None)
     if cur.get("last_result"):
@@ -187,6 +190,23 @@ def check_github(body: GithubCheck) -> dict[str, Any]:
         _answers().setdefault("repos", {})["login"] = res["login"]
         _save()
     return res
+
+
+def app_host(a: dict[str, Any]) -> str:
+    """The host name the app will answer on, when it is known before a deploy."""
+    from urllib.parse import urlparse
+    if a.get("public_url"):
+        return urlparse(a["public_url"]).hostname or ""
+    return (a.get("target", {}).get("eks", {}) or {}).get("domain", "") if a.get("target", {}).get("kind") == "eks" else ""
+
+
+@app.get("/api/check/tls")
+def check_tls() -> dict[str, Any]:
+    a = _answers()
+    t = a.get("tls") or {}
+    if not t.get("cert"):
+        return {"ok": True, "none": True}
+    return tls.check(t.get("cert", ""), t.get("key", ""), app_host(a))
 
 
 @app.get("/api/check/answers")
@@ -324,6 +344,16 @@ def validate(a: dict[str, Any]) -> list[str]:
         miss.append("the default AI model")
     if not a.get("admins"):
         miss.append("at least one admin")
+    t = a.get("tls") or {}
+    if t.get("cert") or t.get("key"):
+        if not (t.get("cert") and t.get("key")):
+            miss.append("both the certificate and its private key")
+        else:
+            res = tls.check(t["cert"], t["key"], app_host(a))
+            miss += [f"a usable certificate: {p}" for p in res["problems"]]
+        url = a.get("public_url") or ""
+        if url and not url.startswith("https://"):
+            miss.append("an app address starting with https:// (a certificate is uploaded)")
     return miss
 
 

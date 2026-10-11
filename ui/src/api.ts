@@ -16,6 +16,7 @@ export type Answers = {
          ts_client_id?: string; ts_client_secret?: string; ts_client_secret_saved?: boolean };
   public_url?: string;
   admins?: string[];
+  tls?: { cert?: string; key?: string; key_saved?: boolean };
   // the last finished deploy, remembered across installer restarts (no passwords)
   last_result?: { app_url?: string; jenkins_url?: string; registry?: string; kind?: string; finished?: string;
                   target?: { kind?: string; context?: string; host?: string; region?: string } };

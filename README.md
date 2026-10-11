@@ -100,6 +100,16 @@ EKS), on ports the `docker run` line publishes on 127.0.0.1 only:
 The wizard shows the password (Show / Copy). It is generated once per install and
 kept in the encrypted answers; Argo CD stores only its bcrypt hash.
 
+## HTTPS with your own certificate (optional)
+
+On "Where it runs", open **Add an HTTPS certificate** and choose the certificate
+(PEM, with its chain) and its unencrypted private key. Set the app address to
+`https://<a name the certificate covers>` (on EKS the domain field works too).
+**Check certificate** verifies that the key matches, the name is covered and it
+has not expired. The Ingress then serves HTTPS with it, on minikube, a server or
+EKS (no ACM certificate is created then). Point the name at the cluster: a DNS
+record, or the hosts file for a local minikube.
+
 ## Secrets
 
 Everything you type stays in the installer's memory and in `answers.enc` on
