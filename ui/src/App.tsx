@@ -395,6 +395,11 @@ function EksFields({ status, a, patch }: StepProps & { status: Status }) {
       <Field label="Node type" value={e.node_type ?? "t3.large"} onChange={(v) => set("node_type", v.trim())} />
       <Field label="Nodes" type="number" value={e.node_count} placeholder="2" onChange={(v) => set("node_count", v === "" ? undefined : Number(v))} />
       <div className="span2">
+        <Field label="Extra cluster admins (optional)" value={e.admin_arns} placeholder="arn:aws:iam::123456789012:user/you"
+               hint="IAM ARNs, comma separated, that may use kubectl on this cluster, e.g. your own laptop's (aws sts get-caller-identity). The identity above always can."
+               onChange={(v) => set("admin_arns", v.trim() || undefined)} />
+      </div>
+      <div className="span2">
         <Field label="Domain for HTTPS (optional)" value={e.domain} placeholder="scan.example.com"
                hint="Leave empty to use the load balancer's address over http. With a domain you add two DNS records during the deploy."
                onChange={(v) => set("domain", v.trim())} />

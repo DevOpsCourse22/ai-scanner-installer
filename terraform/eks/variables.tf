@@ -33,3 +33,9 @@ variable "domain" {
   type        = string
   default     = ""
 }
+
+variable "admin_arns" {
+  description = "Extra IAM user/role ARNs that get cluster-admin through kubectl"
+  type        = list(string)
+  default     = []
+}

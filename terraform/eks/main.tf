@@ -64,6 +64,19 @@ module "eks" {
 
   cluster_endpoint_public_access           = true
   enable_cluster_creator_admin_permissions = true # whoever runs the installer can use kubectl
+
+  # more IAM users/roles with kubectl admin (e.g. your own laptop's AWS identity)
+  access_entries = {
+    for i, arn in var.admin_arns : "admin-${i}" => {
+      principal_arn = arn
+      policy_associations = {
+        admin = {
+          policy_arn   = "arn:aws:eks::aws:policy/AmazonEKSClusterAdminPolicy"
+          access_scope = { type = "cluster" }
+        }
+      }
+    }
+  }
   enable_irsa                              = true
 
   vpc_id     = module.vpc.vpc_id

@@ -1068,7 +1068,7 @@ def test_c_eks_domain_cloud(sim):
 
     tfvars = json.loads((plans.DATA / "terraform" / "installer.auto.tfvars.json").read_text())
     assert tfvars == {"name": "ai-scan-repos", "region": "us-east-1", "node_type": "t3.large",
-                      "node_count": 2, "domain": DOMAIN}
+                      "node_count": 2, "domain": DOMAIN, "admin_arns": []}
     assert (plans.DATA / "terraform" / "main.tf").exists()
     sim.assert_order(
         has("aws", "sts", "get-caller-identity"),

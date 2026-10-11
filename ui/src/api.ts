@@ -8,7 +8,7 @@ export type Answers = {
             sudo_password?: string; sudo_password_saved?: boolean };
     eks?: { region?: string; name?: string; aws_profile?: string; aws_access_key_id?: string;
             aws_secret_access_key?: string; aws_secret_access_key_saved?: boolean;
-            domain?: string; node_type?: string; node_count?: number };
+            domain?: string; node_type?: string; node_count?: number; admin_arns?: string };
   };
   repos?: { owner?: string; installer_repo?: string; token?: string; token_saved?: boolean; login?: string };
   ai?: { mode?: "same_machine" | "tailnet" | "cloud"; endpoint?: string; model?: string; preset?: string;

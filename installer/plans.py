@@ -18,6 +18,7 @@ Answers (what the wizard collects, saved encrypted in the vault):
 from __future__ import annotations
 
 import json
+import re
 import os
 import secrets
 import shutil
@@ -171,7 +172,9 @@ def s_terraform(ctx: Ctx) -> None:
         shutil.copy(f, work / f.name)
     tfvars = {"name": e.get("name") or "ai-scan-repos", "region": e["region"],
               "node_type": e.get("node_type") or "t3.large", "node_count": int(e.get("node_count") or 2),
-              "domain": e.get("domain") or ""}
+              "domain": e.get("domain") or "",
+              "admin_arns": [x.strip() for x in re.split(r"[,\s]+", e.get("admin_arns") or "")
+                             if x.strip().startswith("arn:aws:iam::")]}
     (work / "installer.auto.tfvars.json").write_text(json.dumps(tfvars), encoding="utf-8")
     env = aws_env(ctx.a)
     ctx.sh(["aws", "sts", "get-caller-identity", "--query", "Arn", "--output", "text"], env=env)
