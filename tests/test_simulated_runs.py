@@ -760,10 +760,9 @@ def test_a_local_minikube_same_machine(sim, monkeypatch):
         secret("postgres-credentials"), secret("gateway-secrets"),
         secret("jenkins-admin"), secret("jenkins-github"), has("helm", "jenkins/jenkins"),
         secret("smee-channel"), applies("smee-client"),
-        has("helm", "argo/argo-cd"), secret("repo-ai-scanner-installer"),
-        applies("kind: Application"),
-        has("get", "applications"), has("exec", "deploy/gateway"), is_ai_exec,
-        has("argocd-initial-admin-secret"))
+        has("helm", "argo/argo-cd"), has("argocd-initial-admin-secret"), secret("repo-ai-scanner-installer"),
+        applies("kind: Application"), secret("grafana-admin"), has("helm", "kube-prometheus-stack"),
+        has("get", "applications"), has("exec", "deploy/gateway"), is_ai_exec)
     assert not any("terraform" in c.args[0] for c in sim.calls)
     # registries.yaml / ssh is a K3s-only thing
     assert not any(c.args[0] == "ssh" for c in sim.calls)
@@ -815,8 +814,12 @@ def test_a_local_minikube_same_machine(sim, monkeypatch):
     assert sim.portforwards and "svc/jenkins" in sim.portforwards[0]
 
     assert run.result["app_url"] == "http://localhost" and run.result["registry"] == reg
-    assert a["generated"]["argocd_password"] == ARGO_PW
-    assert_no_secrets(sim, run, a, (ARGO_PW, OAUTH_SECRET))
+    # one admin password for Jenkins, Argo CD (bcrypt hash in its values) and Grafana
+    pw = a["generated"]["jenkins_password"]
+    assert run.result["passwords"] == {"Jenkins, Argo CD and Grafana": pw}
+    argo = next(c for c in sim.calls if "argo/argo-cd" in c.args)
+    assert pw not in (argo.input or "") and "argocdServerAdminPassword: $2" in (argo.input or "")
+    assert_no_secrets(sim, run, a, (OAUTH_SECRET,))
 
 
 def test_a2_local_kubeconfig_embeds_minikube_certs(sim, monkeypatch):
@@ -1083,7 +1086,8 @@ def test_c_eks_domain_cloud(sim):
         secret("gateway-secrets"),
         has("annotate", "serviceaccount", "default"),
         has("helm", "jenkins/jenkins"), has("get", "svc", "jenkins"), has("helm", "jenkins/jenkins"),
-        has("helm", "argo/argo-cd"), has("get", "applications"), is_ai_exec, has("argocd-initial-admin-secret"))
+        has("helm", "argo/argo-cd"), has("argocd-initial-admin-secret"), has("helm", "kube-prometheus-stack"),
+        has("get", "applications"), is_ai_exec)
     # AWS credentials go in the environment, never on a command line
     for c in sim.calls:
         if c.args[0] in ("aws", "terraform"):

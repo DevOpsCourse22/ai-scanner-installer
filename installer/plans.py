@@ -59,6 +59,7 @@ def ensure_generated(a: dict[str, Any]) -> None:
     g.setdefault("postgres_password", secrets.token_urlsafe(24).replace("-", "a").replace("_", "b"))
     g.setdefault("settings_key", secrets.token_hex(32))
     g.setdefault("webhook_secret", secrets.token_hex(32))
+    # the ONE admin password: Jenkins, Argo CD and Grafana all log in as "admin" with it
     g.setdefault("jenkins_password", secrets.token_urlsafe(18))
     g.setdefault("argocd_password", "")
 
@@ -592,7 +593,10 @@ def s_argocd(ctx: Ctx) -> None:
     ctx.sh(helm(ctx) + ["repo", "add", "argo", "https://argoproj.github.io/argo-helm", "--force-update"])
     ctx.sh(helm(ctx) + ["upgrade", "--install", "argocd", "argo/argo-cd", "-n", "argocd",
                         "--version", platform.ARGOCD_CHART, "-f", "-", "--wait", "--timeout", "10m"],
-           input=platform.argocd_values())
+           input=platform.argocd_values(a["generated"]["jenkins_password"]))
+    # the chart only sets the password; this Secret would show an older, unused one
+    ctx.sh(k(ctx) + ["-n", "argocd", "delete", "secret", "argocd-initial-admin-secret", "--ignore-not-found"],
+           check=False, quiet=True)
     inst = installer_repo(a)
     secret_apply(ctx, "argocd", "repo-ai-scanner-installer", {
         "type": "git", "url": f"https://github.com/{inst}.git",
@@ -743,26 +747,33 @@ def s_default_ai(ctx: Ctx) -> None:
     ctx.log("Default AI model " + out.strip().splitlines()[-1])
 
 
+def s_monitoring(ctx: Ctx) -> None:
+    """Prometheus + Grafana, like K3S-SRV. Grafana logs in as admin with the install's password."""
+    ensure_ns(ctx, "monitoring")
+    secret_apply(ctx, "monitoring", "grafana-admin", {"admin-user": "admin",
+                                                       "admin-password": ctx.a["generated"]["jenkins_password"]})
+    ctx.sh(helm(ctx) + ["repo", "add", "prometheus-community",
+                        "https://prometheus-community.github.io/helm-charts", "--force-update"])
+    version = ["--version", platform.MONITORING_CHART] if platform.MONITORING_CHART else []
+    ctx.sh(helm(ctx) + ["upgrade", "--install", "monitoring", "prometheus-community/kube-prometheus-stack",
+                        "-n", "monitoring", *version, "-f", "-", "--wait", "--timeout", "15m"],
+           input=platform.monitoring_values())
+    # Grafana reads the Secret only at start
+    ctx.sh(k(ctx) + ["-n", "monitoring", "rollout", "restart", "deploy/monitoring-grafana"], check=False, quiet=True)
+    ctx.sh(helm(ctx) + ["list", "-n", "monitoring"])
+
+
 def s_result(ctx: Ctx) -> None:
     g = ctx.a["generated"]
-    argo_pw = ctx.sh(k(ctx) + ["-n", "argocd", "get", "secret", "argocd-initial-admin-secret", "-o",
-                               "jsonpath={.data.password}"], quiet=True, check=False).strip()
-    import base64
-    if argo_pw:
-        g["argocd_password"] = base64.b64decode(argo_pw).decode()
-        ctx.run.secrets.append(g["argocd_password"])
-        ctx.state["answers_changed"] = True
     ctx.state["result"] = {
         "app_url": ctx.state["public_url"],
         "jenkins_url": ctx.state.get("jenkins_url", ""),
         "webhook": ctx.state.get("webhook_url", ""),
         "registry": ctx.state["registry"],
-        "commands": {
-            "Jenkins": "kubectl -n jenkins port-forward svc/jenkins 8080:8080",
-            "Argo CD": "kubectl -n argocd port-forward svc/argocd-server 8081:80",
-        },
+        # Jenkins, Argo CD and Grafana open from the wizard (installer/services.py)
+        "services": True,
         # shown on the wizard's last screen (localhost only); also in the encrypted answers
-        "passwords": {"Jenkins": g["jenkins_password"], **({"Argo CD": g["argocd_password"]} if g.get("argocd_password") else {})},
+        "passwords": {"Jenkins, Argo CD and Grafana": g["jenkins_password"]},
     }
 
 
@@ -774,10 +785,10 @@ def s_destroy_cluster_side(ctx: Ctx) -> None:
         ctx.sh(k(ctx) + ["-n", "argocd", "delete", "application", app, "--ignore-not-found", "--wait=false"], check=False)
     # the app first, while the Tailscale operator still runs to remove its finalizer on lmstudio
     ctx.sh(k(ctx) + ["delete", "namespace", NS, "--ignore-not-found", "--timeout=10m"], check=False)
-    for rel, ns in (("argocd", "argocd"), ("jenkins", "jenkins"), ("tailscale-operator", "tailscale"),
-                    ("ingress-nginx", "ingress-nginx")):
+    for rel, ns in (("argocd", "argocd"), ("jenkins", "jenkins"), ("monitoring", "monitoring"),
+                    ("tailscale-operator", "tailscale"), ("ingress-nginx", "ingress-nginx")):
         ctx.sh(helm(ctx) + ["uninstall", rel, "-n", ns, "--wait"], check=False)
-    for ns in ("jenkins", "argocd", "registry", "tailscale", "ingress-nginx"):
+    for ns in ("jenkins", "argocd", "monitoring", "registry", "tailscale", "ingress-nginx"):
         ctx.sh(k(ctx) + ["delete", "namespace", ns, "--ignore-not-found", "--timeout=10m"], check=False)
     ctx.sh(k(ctx) + ["delete", "storageclass", "reports-noexec", "--ignore-not-found"], check=False)
     g = a.get("generated", {})
@@ -828,6 +839,7 @@ def install_plan(a: dict[str, Any]) -> list[Step]:
         Step("webhooks", "Connect GitHub webhooks", s_webhooks),
         Step("argocd", "Install Argo CD and the app", s_argocd),
         Step("database", "Match the database password", s_db_password),
+        Step("monitoring", "Install Prometheus and Grafana", s_monitoring),
         Step("build", "Build the images (first pipeline run)", s_first_build),
         Step("healthy", "Wait for the app to be healthy", s_healthy),
         Step("ai", "Save the default AI model", s_default_ai),

@@ -196,9 +196,36 @@ spec:
 """
 
 
-def argocd_values() -> str:
-    return yaml.safe_dump({"configs": {"params": {"server.insecure": True}},
+def argocd_values(admin_password: str) -> str:
+    """admin_password: the install's one admin password; Argo CD stores only its bcrypt hash."""
+    import bcrypt
+    hashed = bcrypt.hashpw(admin_password.encode(), bcrypt.gensalt()).decode()
+    return yaml.safe_dump({"configs": {"params": {"server.insecure": True},
+                                       "secret": {"argocdServerAdminPassword": hashed}},
                            "dex": {"enabled": False}, "notifications": {"enabled": False}})
+
+
+MONITORING_CHART = "92.3.0"  # kube-prometheus-stack, pinned (helm search repo prometheus-community/kube-prometheus-stack)
+
+
+def monitoring_values() -> str:
+    """Prometheus + Grafana (kube-prometheus-stack), sized for a small cluster.
+    Grafana's admin login comes from the Secret grafana-admin (the install's one password)."""
+    return yaml.safe_dump({
+        "fullnameOverride": "monitoring",
+        "alertmanager": {"enabled": False},
+        "grafana": {
+            "fullnameOverride": "monitoring-grafana",
+            "admin": {"existingSecret": "grafana-admin", "userKey": "admin-user", "passwordKey": "admin-password"},
+            "resources": {"requests": {"cpu": "50m", "memory": "128Mi"}, "limits": {"memory": "384Mi"}},
+        },
+        "prometheus": {"prometheusSpec": {
+            "retention": "3d",
+            "resources": {"requests": {"cpu": "100m", "memory": "400Mi"}, "limits": {"memory": "1Gi"}},
+            # pick up ServiceMonitors from every namespace, not only this release's
+            "serviceMonitorSelectorNilUsesHelmValues": False,
+            "podMonitorSelectorNilUsesHelmValues": False}},
+    }, sort_keys=False)
 
 
 def argo_app(name: str, repo: str, branch: str, path: str, lmstudio: bool = False) -> str:

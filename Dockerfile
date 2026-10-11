@@ -55,5 +55,5 @@ ENV INSTALLER_DATA=/data \
     HOST_MINIKUBE=/host/minikube \
     PYTHONUNBUFFERED=1
 VOLUME /data
-EXPOSE 8088
+EXPOSE 8088 8081 8082 8083
 CMD ["uvicorn", "installer.app:app", "--host", "0.0.0.0", "--port", "8088"]

@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import github, kube, plans, runner, vault
+from . import github, kube, plans, runner, services, vault
 
 app = FastAPI(title="ai-scanner-installer")
 UI = Path(os.environ.get("INSTALLER_UI", Path(__file__).resolve().parent.parent / "ui" / "dist"))
@@ -346,6 +346,32 @@ def run_cancel() -> dict[str, Any]:
     run.resume.set()
     run.log("Cancel requested: stopping after the current step.", "", "warn")
     return {"ok": True}
+
+
+@app.get("/api/services")
+def get_services() -> dict[str, Any]:
+    """Jenkins, Argo CD and Grafana: where to open them, and the shared admin login."""
+    a = _answers()
+    pw = (a.get("generated") or {}).get("jenkins_password", "")
+    return {**services.status(), "user": "admin", "password": pw}
+
+
+@app.post("/api/services/start")
+def start_services() -> dict[str, Any]:
+    """Open (or reopen) the port-forwards to the three services."""
+    a = _answers()
+    if not a.get("target", {}).get("kind"):
+        raise HTTPException(400, "Choose where it runs first.")
+    try:
+        kc = services.kubeconfig_path(WORKDIR)
+        env = services.env_for(a)
+        if not kc:
+            kc, env = services.connect(a, WORKDIR)
+        return services.start(kc, env)
+    except Exception as exc:  # noqa: BLE001 - shown to the user
+        msg = plans.cluster_error(a, str(exc))
+        services._state["error"] = msg
+        raise HTTPException(502, msg) from exc
 
 
 class Continue(BaseModel):
