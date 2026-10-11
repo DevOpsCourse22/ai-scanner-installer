@@ -9,4 +9,4 @@ spec:
     spec:
       containers:
         - name: frontend
-          image: 886436933270.dkr.ecr.us-east-1.amazonaws.com/review-frontend:bootstrap
+          image: 886436933270.dkr.ecr.us-east-1.amazonaws.com/review-frontend:f6b7954
