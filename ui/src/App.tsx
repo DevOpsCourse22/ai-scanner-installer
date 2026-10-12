@@ -645,7 +645,12 @@ function Review({ a, onRun, onChanged }: { a: Answers; onRun: () => void; onChan
           <Services />
           <h2 className="change-h">Change it</h2>
         </div>
-      ) : <h1>Ready to deploy</h1>}
+      ) : (
+        <>
+          <h1>Ready to deploy</h1>
+          {found?.installed ? <Health onForgotten={onChanged} /> : null}
+        </>
+      )}
       <dl className="summary">
         {rows.map(([k, v]) => (<div key={k}><dt>{k}</dt><dd>{v}</dd></div>))}
       </dl>

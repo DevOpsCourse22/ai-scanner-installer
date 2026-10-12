@@ -51,8 +51,7 @@ def _probe(url: str) -> tuple[bool, str]:
 def check(a: dict[str, Any], workdir: str) -> dict[str, Any]:
     from . import plans, services
     last = a.get("last_result") or {}
-    eks_state = a.get("target", {}).get("kind") == "eks" and \
-        (plans.DATA / "terraform" / "terraform.tfstate").exists()
+    eks_state = a.get("target", {}).get("kind") == "eks" and plans.tf_has_resources()
     remembered = bool(last) or eks_state
     out: dict[str, Any] = {"remembered": remembered, "parts": [], "app_url": last.get("app_url", "")}
     if not a.get("target", {}).get("kind"):

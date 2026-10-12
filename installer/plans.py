@@ -825,8 +825,8 @@ def s_destroy_connect_eks(ctx: Ctx) -> None:
 
 def s_terraform_destroy(ctx: Ctx) -> None:
     work = DATA / "terraform"
-    if not (work / "terraform.tfstate").exists():
-        ctx.log("No Terraform state on this volume; nothing to destroy in AWS.", "warn")
+    if not tf_has_resources():
+        ctx.log("Terraform's state lists no AWS resources; nothing to destroy in AWS.", "warn")
         return
     env = aws_env(ctx.a)
     ctx.sh(["terraform", "init", "-input=false", "-no-color"], cwd=str(work), env=env)
@@ -871,10 +871,20 @@ def destroy_plan(a: dict[str, Any]) -> list[Step]:
             Step("cluster", "Remove the app, Jenkins, Argo CD and the registry", s_destroy_cluster_side)]
 
 
+def tf_has_resources() -> bool:
+    """True when Terraform's state still lists AWS resources. `terraform destroy`
+    leaves the state FILE behind (empty), so the file alone means nothing."""
+    state = DATA / "terraform" / "terraform.tfstate"
+    try:
+        return bool(json.loads(state.read_text(encoding="utf-8")).get("resources"))
+    except (OSError, ValueError):
+        return False
+
+
 def detect_existing(a: dict[str, Any], workdir: str) -> dict[str, Any]:
     """Is the app already installed on this target? Used to offer Upgrade or Destroy."""
     if a.get("target", {}).get("kind") == "eks":
-        return {"installed": (DATA / "terraform" / "terraform.tfstate").exists()}
+        return {"installed": tf_has_resources()}
     try:
         from .runner import Run
         ctx = Ctx(Run(kind="detect", steps=[]), a, workdir)

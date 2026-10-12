@@ -249,3 +249,17 @@ def test_forget_clears_the_record_and_sets_terraform_state_aside(api, tmp_path):
     r = client.post("/api/forget").json()
     assert "last_result" not in r["answers"] and not state.exists()
     assert (state.parent / r["state_moved_to"]).exists()        # set aside, not deleted
+
+
+def test_an_emptied_terraform_state_is_not_an_install(monkeypatch, tmp_path):
+    import json
+    from installer import plans
+    monkeypatch.setattr(plans, "DATA", tmp_path)
+    (tmp_path / "terraform").mkdir()
+    state = tmp_path / "terraform" / "terraform.tfstate"
+    eks = {"target": {"kind": "eks"}}
+    assert plans.detect_existing(eks, str(tmp_path)) == {"installed": False}           # no file
+    state.write_text(json.dumps({"version": 4, "resources": []}))                    # after terraform destroy
+    assert plans.detect_existing(eks, str(tmp_path)) == {"installed": False}
+    state.write_text(json.dumps({"version": 4, "resources": [{"type": "aws_vpc"}]}))
+    assert plans.detect_existing(eks, str(tmp_path)) == {"installed": True}

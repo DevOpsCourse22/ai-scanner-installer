@@ -1173,7 +1173,7 @@ def test_d_destroy_eks(sim):
     a["oauth"] = {"client_id": OAUTH_ID, "client_secret": OAUTH_SECRET}
     work = plans.DATA / "terraform"
     work.mkdir(parents=True)
-    (work / "terraform.tfstate").write_text("{}", encoding="utf-8")
+    (work / "terraform.tfstate").write_text('{"resources": [{"type": "aws_vpc"}]}', encoding="utf-8")
     run = run_plan(sim, a, "destroy")
     assert_done(run)
     assert [s.id for s in run.steps] == ["connect", "cluster", "terraform"]
