@@ -23,7 +23,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import github, kube, plans, runner, services, tls, vault
+from . import github, health, kube, plans, runner, services, tls, vault
 
 app = FastAPI(title="ai-scanner-installer")
 UI = Path(os.environ.get("INSTALLER_UI", Path(__file__).resolve().parent.parent / "ui" / "dist"))
@@ -207,6 +207,29 @@ def check_tls() -> dict[str, Any]:
     if not t.get("cert"):
         return {"ok": True, "none": True}
     return tls.check(t.get("cert", ""), t.get("key", ""), app_host(a))
+
+
+@app.get("/api/check/health")
+def check_health() -> dict[str, Any]:
+    """Is the remembered install really up? (installer/health.py)"""
+    return health.check(_answers(), WORKDIR)
+
+
+@app.post("/api/forget")
+def forget() -> dict[str, Any]:
+    """Clear the installer's own record of the last deploy. Changes nothing in any
+    cluster or account; for EKS the Terraform state is set aside, not deleted."""
+    a = _answers()
+    a.pop("last_result", None)
+    state = plans.DATA / "terraform" / "terraform.tfstate"
+    moved = ""
+    if state.exists():
+        import time as _t
+        dest = state.with_name(f"terraform.tfstate.forgotten-{int(_t.time())}")
+        state.rename(dest)
+        moved = dest.name
+    _save()
+    return {"answers": masked(a), "state_moved_to": moved}
 
 
 @app.get("/api/check/answers")

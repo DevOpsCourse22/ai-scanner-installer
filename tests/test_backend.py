@@ -215,3 +215,37 @@ def test_certificate_puts_tls_on_the_ingress():
     patch = yaml.safe_load(files["ingress-patch.yaml"])
     assert {"op": "add", "path": "/spec/tls",
             "value": [{"hosts": ["scan.example.com"], "secretName": "ai-scan-tls"}]} in patch
+
+
+def test_health_says_gone_unreachable_or_up(monkeypatch, tmp_path):
+    import subprocess as sp
+    from installer import health, services
+    a = {"target": {"kind": "local", "context": "minikube"}, "last_result": {"app_url": "http://localhost"}}
+    monkeypatch.setattr(services, "connect", lambda a, w: (_ for _ in ()).throw(RuntimeError("connection refused")))
+    assert health.check(a, str(tmp_path))["status"] == "unreachable"
+    monkeypatch.setattr(services, "connect", lambda a, w: ("kc", {}))
+    monkeypatch.setattr(health, "_kubectl", lambda kc, env, *args, timeout=30: sp.CompletedProcess(
+        args, 1, "", 'Error from server (NotFound): namespaces "ai-scan-repos" not found'))
+    r = health.check(a, str(tmp_path))
+    assert r["status"] == "gone" and r["remembered"]
+    items = {"items": [{"metadata": {"name": n}, "spec": {"replicas": 1}, "status": {"readyReplicas": 1}}
+                       for n in health.APP]}
+    monkeypatch.setattr(health, "_kubectl", lambda kc, env, *args, timeout=30: sp.CompletedProcess(
+        args, 0, "namespace/ai-scan-repos" if "namespace" in args else __import__("json").dumps(items), ""))
+    monkeypatch.setattr(health, "_probe", lambda url: (True, "HTTP 200"))
+    assert health.check(a, str(tmp_path))["status"] == "up"
+    monkeypatch.setattr(health, "_probe", lambda url: (False, "ConnectError"))
+    assert health.check(a, str(tmp_path))["status"] == "degraded"
+
+
+def test_forget_clears_the_record_and_sets_terraform_state_aside(api, tmp_path):
+    from installer import plans
+    client, appmod = api
+    client.post("/api/unlock", json={"passphrase": "longenough1", "new": True})
+    appmod._session["answers"]["last_result"] = {"app_url": "http://x"}
+    state = plans.DATA / "terraform" / "terraform.tfstate"
+    state.parent.mkdir(parents=True, exist_ok=True)
+    state.write_text("{}")
+    r = client.post("/api/forget").json()
+    assert "last_result" not in r["answers"] and not state.exists()
+    assert (state.parent / r["state_moved_to"]).exists()        # set aside, not deleted

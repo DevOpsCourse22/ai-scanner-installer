@@ -140,7 +140,7 @@ export default function App() {
         {step === "repos" ? <Repos a={answers} patch={patch} /> : null}
         {step === "model" ? <Model a={answers} patch={patch} /> : null}
         {step === "people" ? <People a={answers} patch={patch} /> : null}
-        {step === "review" ? <Review a={answers} onRun={() => setStep("deploy")} /> : null}
+        {step === "review" ? <Review a={answers} onRun={() => setStep("deploy")} onChanged={setAnswers} /> : null}
         {step === "deploy" ? <Deploy onBack={async () => {
           setAnswers((await api.getAnswers().catch(() => ({ answers }))).answers);   // picks up the remembered deploy
           setStep("review");
@@ -590,7 +590,7 @@ function People({ a, patch }: StepProps) {
   );
 }
 
-function Review({ a, onRun }: { a: Answers; onRun: () => void }) {
+function Review({ a, onRun, onChanged }: { a: Answers; onRun: () => void; onChanged: (a: Answers) => void }) {
   const [found, setFound] = useState<{ installed: boolean; error?: string } | null>(null);
   const [err, setErr] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -641,6 +641,7 @@ function Review({ a, onRun }: { a: Answers; onRun: () => void }) {
             {last.jenkins_url ? <div><dt>Jenkins (public)</dt><dd><code>{last.jenkins_url}</code><Copy text={last.jenkins_url} label="Jenkins address" /></dd></div> : null}
             {last.registry ? <div><dt>Images</dt><dd><code>{last.registry}</code></dd></div> : null}
           </dl>
+          <Health onForgotten={onChanged} />
           <Services />
           <h2 className="change-h">Change it</h2>
         </div>
@@ -665,8 +666,8 @@ function Review({ a, onRun }: { a: Answers; onRun: () => void }) {
           </button>
         )}
       </div>
-      {found?.installed ? (
-        <div className="danger-zone">
+      {found?.installed || last ? (
+        <div className="danger-zone" id="remove">
           <h2>Remove</h2>
           <p>Deletes the app, Jenkins, Argo CD, Grafana and the webhooks{t.kind === "eks" ? ", then every AWS resource Terraform created" : ""}. The repositories keep their code. Type <span className="mono">destroy</span> to confirm.</p>
           <div className="row">
@@ -962,6 +963,61 @@ function TlsFields({ a, patch }: StepProps) {
       ) : (
         <div className="alert" role="alert"><ul>{(res.problems ?? []).map((m) => <li key={m}>{m}</li>)}</ul></div>
       )) : null}
+    </div>
+  );
+}
+
+type HealthState = { status: "up" | "degraded" | "gone" | "unreachable" | "none"; message: string; remembered: boolean;
+  parts: { name: string; ready: boolean; detail: string }[] };
+
+const HEALTH_LABEL: Record<HealthState["status"], string> = {
+  up: "Running", degraded: "Partly running", gone: "Not deployed", unreachable: "Cluster not reachable", none: "Not deployed",
+};
+
+/** Looks at the cluster (installer/health.py), so a remembered install that is
+    really gone is said so, with Remove or Forget as the next step. */
+function Health({ onForgotten }: { onForgotten: (a: Answers) => void }) {
+  const [h, setH] = useState<HealthState | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const load = () => {
+    setH(null); setErr("");
+    fetch("/api/check/health").then((r) => r.json()).then(setH).catch(() => setErr("Could not check the install."));
+  };
+  useEffect(load, []);
+  async function forget() {
+    if (!window.confirm("Forget this install? The installer stops showing it; nothing in the cluster or in AWS is deleted. "
+      + "If anything is still running there (EKS costs money), use Remove instead.")) return;
+    setBusy(true);
+    try {
+      const r = await fetch("/api/forget", { method: "POST" }).then((x) => x.json());
+      onForgotten(r.answers);
+    } catch { setErr("Could not forget the install."); }
+    setBusy(false);
+  }
+  if (!h) return <p className="health checking" role="status">{err || "Checking whether it is up"}</p>;
+  return (
+    <div className={`health h-${h.status}`} role="status">
+      <p className="health-line"><span className="dot" aria-hidden="true" /><strong>{HEALTH_LABEL[h.status]}</strong> {h.message}
+        <button type="button" className="link" onClick={load}>Check again</button></p>
+      {h.parts.length ? (
+        <ul className="health-parts">
+          {h.parts.map((p) => <li key={p.name} className={p.ready ? "ok" : "bad"}>{p.name}: {p.detail}</li>)}
+        </ul>
+      ) : null}
+      {h.status !== "up" ? (
+        <div className="health-advice">
+          <p>{h.status === "degraded"
+            ? "If it does not recover, remove it and deploy again."
+            : "The installer still remembers this install. Remove cleans up whatever is left (for EKS also the AWS resources); Forget only clears the installer's record."}</p>
+          <p className="row">
+            <a className="btn danger" href="#remove">Remove it</a>
+            {h.status !== "degraded" ? (
+              <button type="button" className="btn ghost" disabled={busy} onClick={forget}>Forget it</button>
+            ) : null}
+          </p>
+        </div>
+      ) : null}
     </div>
   );
 }

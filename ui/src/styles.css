@@ -292,3 +292,19 @@ h2 { font-family: var(--display); font-size: 1.2rem; margin: 0 0 6px; letter-spa
 .tls { border-top: 1px solid var(--line); margin-top: 8px; padding-top: 18px; }
 .tls input[type="file"] { padding: 8px; }
 .tls .alert ul { margin: 0; padding-left: 18px; }
+
+/* ---------- is the remembered install up? ---------- */
+.health { margin: 0 0 18px; }
+.health-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 0 0 6px; }
+.health .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--line-strong); }
+.h-up .dot { background: var(--ok); }
+.h-degraded .dot { background: var(--warn); }
+.h-gone .dot, .h-unreachable .dot { background: var(--danger); }
+.health-parts { list-style: none; padding: 0; margin: 0 0 10px; display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: 0.88rem; }
+.health-parts .ok { color: var(--ok); }
+.health-parts .bad { color: var(--danger); }
+.health-advice { border-left: 4px solid var(--danger); background: var(--danger-soft); border-radius: var(--radius-sm);
+  padding: 10px 14px 2px; }
+.h-degraded .health-advice { border-left-color: var(--warn); }
+.health-advice .btn.danger { text-decoration: none; }
+.health.checking { color: var(--muted); }
