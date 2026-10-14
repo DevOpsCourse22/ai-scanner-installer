@@ -430,7 +430,8 @@ def get_services() -> dict[str, Any]:
     """Jenkins, Argo CD and Grafana: where to open them, and the shared admin login."""
     a = _answers()
     pw = (a.get("generated") or {}).get("jenkins_password", "")
-    return {**services.status(), "user": "admin", "password": pw}
+    public = (a.get("last_result") or {}).get("service_urls") if a.get("target", {}).get("kind") == "eks" else None
+    return {**services.status(public or None), "user": "admin", "password": pw}
 
 
 @app.post("/api/services/start")

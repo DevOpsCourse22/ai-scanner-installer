@@ -182,7 +182,7 @@ def s_terraform(ctx: Ctx) -> None:
     ctx.sh(["aws", "sts", "get-caller-identity", "--query", "Arn", "--output", "text"], env=env)
     ctx.sh(["terraform", "init", "-input=false", "-no-color"], cwd=str(work), env=env)
     ctx.log("Creating the VPC, EKS, EFS and ECR. This usually takes 15 to 20 minutes.")
-    ctx.sh(["terraform", "apply", "-auto-approve", "-input=false", "-no-color"], cwd=str(work), env=env)
+    terraform(ctx, ["apply", "-auto-approve", "-input=false", "-no-color"], work, env)
     out = json.loads(ctx.sh(["terraform", "output", "-json"], cwd=str(work), env=env, quiet=True))
     ctx.state["tf"] = {kk: v["value"] for kk, v in out.items()}
     kc = Path(ctx.workdir) / "kubeconfig"
@@ -607,7 +607,7 @@ def s_argocd(ctx: Ctx) -> None:
     ctx.sh(helm(ctx) + ["repo", "add", "argo", "https://argoproj.github.io/argo-helm", "--force-update"])
     ctx.sh(helm(ctx) + ["upgrade", "--install", "argocd", "argo/argo-cd", "-n", "argocd",
                         "--version", platform.ARGOCD_CHART, "-f", "-", "--wait", "--timeout", "10m"],
-           input=platform.argocd_values(a["generated"]["jenkins_password"]))
+           input=platform.argocd_values(a["generated"]["jenkins_password"], public=a["target"]["kind"] == "eks"))
     # the chart only sets the password; this Secret would show an older, unused one
     ctx.sh(k(ctx) + ["-n", "argocd", "delete", "secret", "argocd-initial-admin-secret", "--ignore-not-found"],
            check=False, quiet=True)
@@ -771,15 +771,30 @@ def s_monitoring(ctx: Ctx) -> None:
     version = ["--version", platform.MONITORING_CHART] if platform.MONITORING_CHART else []
     ctx.sh(helm(ctx) + ["upgrade", "--install", "monitoring", "prometheus-community/kube-prometheus-stack",
                         "-n", "monitoring", *version, "-f", "-", "--wait", "--timeout", "15m"],
-           input=platform.monitoring_values())
+           input=platform.monitoring_values(public=ctx.a["target"]["kind"] == "eks"))
     # Grafana reads the Secret only at start
     ctx.sh(k(ctx) + ["-n", "monitoring", "rollout", "restart", "deploy/monitoring-grafana"], check=False, quiet=True)
     ctx.sh(helm(ctx) + ["list", "-n", "monitoring"])
 
 
+def public_service_urls(ctx: Ctx) -> dict[str, str]:
+    """EKS: Jenkins, Argo CD and Grafana each have an AWS load balancer; their addresses."""
+    urls = {}
+    for name, ns, svc, port in (("Jenkins", "jenkins", "jenkins", 8080), ("Argo CD", "argocd", "argocd-server", 80),
+                                ("Grafana", "monitoring", "monitoring-grafana", 80)):
+        try:
+            host = wait_until(ctx, f"{name}'s load balancer", lambda: lb_address(ctx, ns, svc), 600, 10)
+            urls[name] = f"http://{host}" + (f":{port}" if port != 80 else "") + "/"
+        except StepFailed as exc:
+            ctx.log(str(exc), "warn")
+    return urls
+
+
 def s_result(ctx: Ctx) -> None:
     g = ctx.a["generated"]
+    service_urls = public_service_urls(ctx) if ctx.a["target"]["kind"] == "eks" else {}
     ctx.state["result"] = {
+        "service_urls": service_urls,
         "app_url": ctx.state["public_url"],
         "jenkins_url": ctx.state.get("jenkins_url", ""),
         "webhook": ctx.state.get("webhook_url", ""),
@@ -823,14 +838,34 @@ def s_destroy_connect_eks(ctx: Ctx) -> None:
     ctx.state["cluster_gone"] = "ResourceNotFoundException" in r
 
 
+TRANSIENT = ("no such host", "i/o timeout", "connection reset", "TLS handshake timeout",
+             "request send failed", "temporary failure in name resolution", "connection refused")
+
+
+def terraform(ctx: Ctx, args: list[str], work: Path, env: dict[str, str], tries: int = 3) -> str:
+    """terraform <args>, retried when it fails on a network problem (a DNS lookup that
+    fails for a moment inside Docker made `destroy` stop half way)."""
+    for attempt in range(1, tries + 1):
+        start = len(ctx.run.lines)          # judge only this attempt's output
+        try:
+            return ctx.sh(["terraform", *args], cwd=str(work), env=env)
+        except StepFailed:
+            tail = " ".join(line["text"] for line in ctx.run.lines[start:][-60:]).lower()
+            if attempt == tries or not any(t in tail for t in TRANSIENT):
+                raise
+            ctx.log(f"Network problem talking to AWS; trying again ({attempt}/{tries - 1}).", "warn")
+            time.sleep(15 * attempt)
+    return ""
+
+
 def s_terraform_destroy(ctx: Ctx) -> None:
     work = DATA / "terraform"
     if not tf_has_resources():
         ctx.log("Terraform's state lists no AWS resources; nothing to destroy in AWS.", "warn")
         return
     env = aws_env(ctx.a)
-    ctx.sh(["terraform", "init", "-input=false", "-no-color"], cwd=str(work), env=env)
-    ctx.sh(["terraform", "destroy", "-auto-approve", "-input=false", "-no-color"], cwd=str(work), env=env)
+    terraform(ctx, ["init", "-input=false", "-no-color"], work, env)
+    terraform(ctx, ["destroy", "-auto-approve", "-input=false", "-no-color"], work, env)
 
 
 # --- plans ---------------------------------------------------------------------------

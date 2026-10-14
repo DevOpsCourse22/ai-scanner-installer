@@ -196,19 +196,23 @@ spec:
 """
 
 
-def argocd_values(admin_password: str) -> str:
-    """admin_password: the install's one admin password; Argo CD stores only its bcrypt hash."""
+def argocd_values(admin_password: str, public: bool = False) -> str:
+    """admin_password: the install's one admin password; Argo CD stores only its bcrypt hash.
+    public: on EKS the UI gets its own AWS load balancer (http, admin login required)."""
     import bcrypt
     hashed = bcrypt.hashpw(admin_password.encode(), bcrypt.gensalt()).decode()
-    return yaml.safe_dump({"configs": {"params": {"server.insecure": True},
-                                       "secret": {"argocdServerAdminPassword": hashed}},
-                           "dex": {"enabled": False}, "notifications": {"enabled": False}})
+    values: dict[str, Any] = {"configs": {"params": {"server.insecure": True},
+                                          "secret": {"argocdServerAdminPassword": hashed}},
+                              "dex": {"enabled": False}, "notifications": {"enabled": False}}
+    if public:
+        values["server"] = {"service": {"type": "LoadBalancer"}}
+    return yaml.safe_dump(values)
 
 
 MONITORING_CHART = "92.3.0"  # kube-prometheus-stack, pinned (helm search repo prometheus-community/kube-prometheus-stack)
 
 
-def monitoring_values() -> str:
+def monitoring_values(public: bool = False) -> str:
     """Prometheus + Grafana (kube-prometheus-stack), sized for a small cluster.
     Grafana's admin login comes from the Secret grafana-admin (the install's one password)."""
     return yaml.safe_dump({
@@ -218,6 +222,8 @@ def monitoring_values() -> str:
             "fullnameOverride": "monitoring-grafana",
             "admin": {"existingSecret": "grafana-admin", "userKey": "admin-user", "passwordKey": "admin-password"},
             "resources": {"requests": {"cpu": "50m", "memory": "128Mi"}, "limits": {"memory": "384Mi"}},
+            # on EKS: its own AWS load balancer, like Jenkins and Argo CD
+            **({"service": {"type": "LoadBalancer"}} if public else {}),
         },
         "prometheus": {"prometheusSpec": {
             "retention": "3d",

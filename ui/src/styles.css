@@ -308,3 +308,13 @@ h2 { font-family: var(--display); font-size: 1.2rem; margin: 0 0 6px; letter-spa
 .h-degraded .health-advice { border-left-color: var(--warn); }
 .health-advice .btn.danger { text-decoration: none; }
 .health.checking { color: var(--muted); }
+
+/* ---------- clear links: a button plus the full address ---------- */
+.btn.small { padding: 6px 14px; font-size: 0.86rem; text-decoration: none; display: inline-block; }
+a.btn.primary { color: var(--brand-ink); text-decoration: none; }
+.services-list li { grid-template-columns: 14px 90px 1fr; }
+.services-open { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.services-url { font-size: 0.8rem; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: 6px; padding: 3px 8px; overflow-wrap: anywhere; word-break: break-all; }
+.app-link { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 6px 0 18px; }
+.app-link .services-url { font-size: 0.86rem; }

@@ -46,7 +46,7 @@ docker run --rm -it -p 127.0.0.1:8088:8088 -p 127.0.0.1:8081-8083:8081-8083 --ne
 
 Then open <http://localhost:8088>.
 
-- Leave out `--network minikube` for any target other than minikube.
+- Leave out `--network minikube` for any target other than minikube (always for EKS).
 - Start minikube **before** the installer. If the installer joins a stopped minikube's network,
   it takes the node's address and minikube then fails with "Address already in use".
 - Leave out the `.aws` mount if you will type AWS keys in the wizard, or are not using EKS.
@@ -96,6 +96,9 @@ EKS), on ports the `docker run` line publishes on 127.0.0.1 only:
 | Jenkins | http://localhost:8081 | `admin` + the install's admin password |
 | Argo CD | http://localhost:8082 | same |
 | Grafana (with Prometheus) | http://localhost:8083 | same |
+
+On **EKS** each of the three gets its own AWS load balancer instead, and the panel
+links to those `...elb.amazonaws.com` addresses (Jenkins on port 8080).
 
 The wizard shows the password (Show / Copy). It is generated once per install and
 kept in the encrypted answers; Argo CD stores only its bcrypt hash.

@@ -263,3 +263,52 @@ def test_an_emptied_terraform_state_is_not_an_install(monkeypatch, tmp_path):
     assert plans.detect_existing(eks, str(tmp_path)) == {"installed": False}
     state.write_text(json.dumps({"version": 4, "resources": [{"type": "aws_vpc"}]}))
     assert plans.detect_existing(eks, str(tmp_path)) == {"installed": True}
+
+
+def test_eks_services_get_their_own_load_balancers():
+    from installer import platform
+    assert yaml.safe_load(platform.argocd_values("pw-12345678", public=True))["server"]["service"]["type"] == "LoadBalancer"
+    assert "server" not in yaml.safe_load(platform.argocd_values("pw-12345678"))
+    g = yaml.safe_load(platform.monitoring_values(public=True))["grafana"]
+    assert g["service"]["type"] == "LoadBalancer"
+    assert "service" not in yaml.safe_load(platform.monitoring_values())["grafana"]
+
+
+def test_services_show_public_addresses_on_eks(monkeypatch):
+    import httpx
+    from installer import services
+    monkeypatch.setattr(httpx, "get", lambda url, **kw: httpx.Response(200))
+    st = services.status({"Jenkins": "http://j.elb.amazonaws.com:8080/", "Argo CD": "http://a.elb.amazonaws.com/",
+                          "Grafana": "http://g.elb.amazonaws.com/"})
+    assert st["public"] and all(s["up"] and "amazonaws.com" in s["url"] for s in st["services"])
+    assert not any("localhost" in s["url"] for s in st["services"])
+
+
+def test_terraform_is_retried_on_a_dns_blip(monkeypatch, tmp_path):
+    from installer import plans, runner
+    calls = []
+    run = runner.Run(kind="destroy", steps=[])
+    ctx = runner.Ctx(run, {}, str(tmp_path))
+
+    def sh(args, **kw):
+        calls.append(args)
+        if len(calls) == 1:
+            ctx.log("dial tcp: lookup elasticfilesystem.us-east-1.amazonaws.com on 127.0.0.11:53: no such host")
+            raise runner.StepFailed("terraform destroy failed")
+        return "ok"
+    ctx.sh = sh
+    monkeypatch.setattr(plans.time, "sleep", lambda s: None)
+    assert plans.terraform(ctx, ["destroy"], tmp_path, {}) == "ok" and len(calls) == 2
+    # a real error is not retried
+    calls.clear()
+
+    def bad(args, **kw):
+        calls.append(args)
+        ctx.log("Error: invalid configuration")
+        raise runner.StepFailed("terraform failed")
+    ctx.sh = bad
+    try:
+        plans.terraform(ctx, ["destroy"], tmp_path, {})
+    except runner.StepFailed:
+        pass
+    assert len(calls) == 1

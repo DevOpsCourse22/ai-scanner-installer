@@ -35,14 +35,27 @@ _lock = threading.Lock()
 _state: dict[str, Any] = {"running": False, "error": "", "kubeconfig": "", "procs": {}, "env": {}}
 
 
-def status() -> dict[str, Any]:
+def status(public_urls: dict[str, str] | None = None) -> dict[str, Any]:
+    """public_urls: on EKS each service has its own AWS address; those are the
+    links then, and no port-forward is needed."""
+    if public_urls:
+        import httpx
+        out = []
+        for name, *_ in SERVICES:
+            url = public_urls.get(name, "")
+            try:
+                up = bool(url) and httpx.get(url, timeout=4, follow_redirects=True).status_code < 500
+            except httpx.HTTPError:
+                up = False
+            out.append({"name": name, "url": url, "up": up, "public": True})
+        return {"running": True, "error": "", "services": out, "publish": "", "public": True}
     out = []
     for name, ns, svc, port, local in SERVICES:
         p = _state["procs"].get(name)
         out.append({"name": name, "url": f"http://localhost:{local}",
                     "up": bool(p and p.poll() is None)})
     return {"running": _state["running"], "error": _state["error"], "services": out,
-            "publish": HOST_PORTS_NOTE}
+            "publish": HOST_PORTS_NOTE, "public": False}
 
 
 def _keep(name: str, ns: str, svc: str, port: int, local: int) -> None:

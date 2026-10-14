@@ -632,7 +632,7 @@ function Review({ a, onRun, onChanged }: { a: Answers; onRun: () => void; onChan
       {last ? (
         <div className="installed">
           <h1>Your install</h1>
-          <p className="big-link"><a href={last.app_url} target="_blank" rel="noreferrer">{last.app_url}</a></p>
+          <AppLink url={last.app_url} />
           <dl className="summary">
             <div><dt>Last {last.kind === "upgrade" ? "upgrade" : "deploy"}</dt>
               <dd>{last.finished ? new Date(last.finished).toLocaleString() : "Not set"}</dd></div>
@@ -833,7 +833,7 @@ function Done({ run, onBack }: { run: RunState; onBack: () => void }) {
     <section className="step done">
       <LogoSweep />
       <h1>AI Scan Repos is running</h1>
-      <p className="big-link"><a href={r.app_url} target="_blank" rel="noreferrer">{r.app_url}</a></p>
+      <AppLink url={r.app_url} />
       <p className="lead">Sign in with GitHub.</p>
       <Services />
       <dl className="info">
@@ -863,7 +863,7 @@ function Reveal({ user, secret, label }: { user: string; secret: string; label: 
 }
 
 type ServiceState = { running: boolean; error: string; user: string; password: string; publish: string;
-  services: { name: string; url: string; up: boolean }[] };
+  public?: boolean; services: { name: string; url: string; up: boolean }[] };
 
 /** Jenkins, Argo CD and Grafana through the installer's own port-forwards
     (installer/services.py): the same links and one admin login for all three. */
@@ -899,18 +899,27 @@ function Services({ onClose }: { onClose?: () => void }) {
           <li key={x.name}>
             <span className={`dot ${x.up ? "up" : ""}`} aria-hidden="true" />
             <span className="services-name">{x.name}</span>
-            {x.up ? <a className="link" href={x.url} target="_blank" rel="noreferrer">{x.url.replace("http://", "")}</a>
-                  : <span className="muted">{st?.running ? "connecting" : "closed"}</span>}
+            {x.url && (x.up || st?.public) ? (
+              <span className="services-open">
+                <a className="btn primary small" href={x.url} target="_blank" rel="noreferrer">Open {x.name}</a>
+                <code className="services-url">{x.url}</code>
+                <Copy text={x.url} label={`${x.name} address`} />
+              </span>
+            ) : <span className="muted">{st?.running ? "connecting" : "closed"}</span>}
           </li>
         ))}
       </ul>
       {err || st?.error ? <p className="alert" role="alert">{err || st?.error}</p> : null}
-      <p className="row">
-        <button type="button" className="btn primary" disabled={busy} onClick={open}>
-          {busy ? "Connecting" : st?.running ? "Reconnect" : "Open all three"}
-        </button>
-        <span className="hint">If a link does not load, restart the installer with {st?.publish ?? "-p 127.0.0.1:8081-8083:8081-8083"} in docker run.</span>
-      </p>
+      {st?.public ? (
+        <p className="hint">Each one has its own AWS address. Sign in as admin with the password above.</p>
+      ) : (
+        <p className="row">
+          <button type="button" className="btn primary" disabled={busy} onClick={open}>
+            {busy ? "Connecting" : st?.running ? "Reconnect" : "Open all three"}
+          </button>
+          <span className="hint">If a link does not load, restart the installer with {st?.publish ?? "-p 127.0.0.1:8081-8083:8081-8083"} in docker run.</span>
+        </p>
+      )}
     </section>
   );
 }
@@ -1023,6 +1032,17 @@ function Health({ onForgotten }: { onForgotten: (a: Answers) => void }) {
           </p>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function AppLink({ url }: { url?: string }) {
+  if (!url) return null;
+  return (
+    <div className="app-link">
+      <a className="btn primary" href={url} target="_blank" rel="noreferrer">Open AI Scan Repos</a>
+      <code className="services-url">{url}</code>
+      <Copy text={url} label="app address" />
     </div>
   );
 }
