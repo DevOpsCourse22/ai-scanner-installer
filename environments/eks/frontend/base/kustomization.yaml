@@ -21,4 +21,4 @@ resources:                                        # the files that make up the U
 images:                                           # rewrite image references in the manifests above
   - name: review-frontend                         # every "image: review-frontend" ...
     newName: 10.0.0.39:30500/review-frontend                    # set by Jenkins: the registry it was pushed to
-    newTag: f6b7954                               # set by Jenkins: the commit it was built from
+    newTag: 10fb5a2                               # set by Jenkins: the commit it was built from

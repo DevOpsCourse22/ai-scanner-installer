@@ -4,4 +4,4 @@
   value: nginx
 - op: add
   path: /spec/rules/0/host
-  value: a10774f727b7d4dc2b3a4e768a90a750-5c8fee62cc3cb898.elb.us-east-1.amazonaws.com
+  value: a189575388f524633b6687f80d33e5fc-617d26de61bb9457.elb.us-east-1.amazonaws.com

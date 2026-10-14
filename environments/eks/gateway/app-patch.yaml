@@ -12,10 +12,10 @@ spec:
           image: 886436933270.dkr.ecr.us-east-1.amazonaws.com/review-gateway:40233b8
           env:
             - name: GATEWAY_FRONTEND_URL
-              value: http://a10774f727b7d4dc2b3a4e768a90a750-5c8fee62cc3cb898.elb.us-east-1.amazonaws.com
+              value: http://a189575388f524633b6687f80d33e5fc-617d26de61bb9457.elb.us-east-1.amazonaws.com
             - name: GATEWAY_CORS_ORIGINS
-              value: http://a10774f727b7d4dc2b3a4e768a90a750-5c8fee62cc3cb898.elb.us-east-1.amazonaws.com
+              value: http://a189575388f524633b6687f80d33e5fc-617d26de61bb9457.elb.us-east-1.amazonaws.com
             - name: GITHUB_OAUTH_REDIRECT_URI
-              value: http://a10774f727b7d4dc2b3a4e768a90a750-5c8fee62cc3cb898.elb.us-east-1.amazonaws.com/auth/github/callback
+              value: http://a189575388f524633b6687f80d33e5fc-617d26de61bb9457.elb.us-east-1.amazonaws.com/auth/github/callback
             - name: GATEWAY_COOKIE_SECURE
               value: "false"

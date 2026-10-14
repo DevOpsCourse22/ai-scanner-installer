@@ -6,7 +6,7 @@
   path: /parameters
   value:
     provisioningMode: efs-ap
-    fileSystemId: fs-01cde1331a69646ad
+    fileSystemId: fs-0344985450fcc81d3
     directoryPerms: '770'
     uid: '10001'
     gid: '10001'
