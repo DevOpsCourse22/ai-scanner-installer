@@ -318,3 +318,20 @@ a.btn.primary { color: var(--brand-ink); text-decoration: none; }
   border-radius: 6px; padding: 3px 8px; overflow-wrap: anywhere; word-break: break-all; }
 .app-link { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 6px 0 18px; }
 .app-link .services-url { font-size: 0.86rem; }
+
+/* ---------- help: guide + FAQ ---------- */
+.top-help { margin-left: auto; padding: 7px 14px; font-size: 0.88rem; }
+.top-help + .top-services { margin-left: 10px; }
+.top-help.on { border-color: var(--brand); color: var(--brand); }
+.top-saved + .top-help { margin-left: 16px; }
+.help { border: 1px solid var(--line-strong); border-radius: var(--radius); padding: 18px 22px 10px;
+  margin: 0 0 32px; background: var(--surface); max-width: 680px; }
+.help h3 { font-family: var(--display); font-size: 1rem; margin: 14px 0 6px; }
+.help-guide { margin: 0; padding-left: 22px; }
+.help-guide li { margin: 0 0 6px; color: var(--muted); }
+.help-guide strong { color: var(--ink); }
+.faq details { border-bottom: 1px solid var(--line); }
+.faq details:first-child { border-top: 1px solid var(--line); }
+.faq summary { cursor: pointer; padding: 10px 2px; font-weight: 600; }
+.faq summary:hover { color: var(--brand); }
+.faq details p { margin: 0 0 12px; color: var(--muted); max-width: 62ch; }

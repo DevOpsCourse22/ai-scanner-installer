@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, type Answers, type LogLine, type RunState, type Status } from "./api";
 import Logo from "./Logo";
 import LogoSweep from "./LogoSweep";
+import Help from "./Help";
 
 type StepId = "unlock" | "where" | "repos" | "model" | "people" | "review" | "deploy";
 const STEPS: { id: StepId; label: string; bar: number }[] = [
@@ -33,6 +34,7 @@ export default function App() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [showServices, setShowServices] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
   const [maxVisited, setMaxVisited] = useState(0);
 
   useEffect(() => {
@@ -95,6 +97,10 @@ export default function App() {
             {saving ? "Saving" : "Answers saved, encrypted"}
           </span>
         ) : null}
+        <button type="button" className={`btn ghost top-help ${showHelp ? "on" : ""}`}
+                aria-pressed={showHelp} onClick={() => setShowHelp(!showHelp)}>
+          Help
+        </button>
         {saved ? (
           <button type="button" className={`btn ghost top-services ${showServices ? "on" : ""}`}
                   aria-pressed={showServices} onClick={() => setShowServices(!showServices)}>
@@ -126,6 +132,7 @@ export default function App() {
       </nav>
 
       <main className="panel">
+        {showHelp ? <Help onClose={() => setShowHelp(false)} /> : null}
         {showServices ? <Services onClose={() => setShowServices(false)} /> : null}
         <p className="step-count">Step {index + 1} of {STEPS.length}: {STEPS[index].label}</p>
         {error ? <p className="alert" role="alert">{error}</p> : null}
